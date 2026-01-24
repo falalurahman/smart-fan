@@ -3,7 +3,7 @@
 
 MatterFan SmartFan;
 
-const uint8_t fanPin = 1;
+const uint8_t fanPin = 4;
 const uint8_t buttonPin = BOOT_PIN;
 
 // Button control
@@ -16,7 +16,7 @@ const uint32_t decommissioningTimeout = 5000;  // keep the button pressed for 5s
 void pulseFan(int pulses) {
   for (int i = 0; i < pulses; i++) {
     digitalWrite(fanPin, HIGH);
-    delay(1000);
+    delay(200);
     digitalWrite(fanPin, LOW);
     if (i < pulses - 1) delay(100);  // delay between pulses
   }
