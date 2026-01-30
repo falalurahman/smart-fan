@@ -15,13 +15,13 @@ public:
   bool attributeChangeCB(uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id, esp_matter_attr_val_t *val);
 
   // New methods for oscillation
-  void onChangeOscillation(std::function<bool(bool)> cb);
-  bool setOscillation(bool newState, bool performUpdate = true);
-  bool getOscillation();
+  void onChangeFanState(std::function<bool(bool)> cb);
+  bool setFanState(bool newState, bool performUpdate = true);
+  bool getFanState();
 
 private:
-  bool currentOscillation = false;
-  std::function<bool(bool)> _onChangeOscillationCB = nullptr;
+  bool currentFanState = false;
+  std::function<bool(bool)> _onChangeFanStateCB = nullptr;
 };
 
 #endif // MATTER_FAN_OSCILLATION_H

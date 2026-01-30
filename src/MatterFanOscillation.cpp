@@ -17,23 +17,10 @@ bool MatterFanOscillation::begin(uint8_t percent, FanMode_t fanMode, FanModeSequ
     return false;
   }
 
-  // Add RockSupport and RockSetting attributes to the FanControl cluster
-  // RockSupport: bitmap32, set to 1 (bit 0) to indicate rocking support
-  esp_matter_attr_val_t rockSupportVal = esp_matter_bitmap32(1);  // Bit 0 for rocking support
-  if (!setAttributeVal(FanControl::Id, FanControl::Attributes::RockSupport::Id, &rockSupportVal)) {
-    log_e("Failed to set RockSupport attribute");
-    return false;
-  }
+  on_off::config_t onoff_config;
+  onoff_config.on_off = false;
+  cluster_t *onoff_cluster = on_off::create(endpoint::get(getEndPointId()), &onoff_config, CLUSTER_FLAG_SERVER, 0);
 
-  // RockSetting: enum8, 0=OFF, 1=ON
-  esp_matter_attr_val_t rockSettingVal = esp_matter_enum8(0);  // Default to OFF
-  if (!setAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockSettingVal)) {
-    log_e("Failed to set RockSetting attribute");
-    return false;
-  }
-
-  currentOscillation = false;  // Initialize oscillation state
-  log_i("RockSupport and RockSetting added to FanControl cluster");
   return true;
 }
 
@@ -42,14 +29,32 @@ bool MatterFanOscillation::attributeChangeCB(uint16_t endpoint_id, uint32_t clus
   bool ret = MatterFan::attributeChangeCB(endpoint_id, cluster_id, attribute_id, val);
 
   if (endpoint_id == getEndPointId() && cluster_id == FanControl::Id) {
-    if (attribute_id == FanControl::Attributes::RockSetting::Id) {
-      log_v("RockSetting changed to %d", val->val.u8);
-      bool newState = (val->val.u8 == 1);  // 1=ON, 0=OFF
-      if (_onChangeOscillationCB != nullptr) {
-        ret &= _onChangeOscillationCB(newState);
+    if (attribute_id == FanControl::Attributes::PercentSetting::Id) {
+      attribute::report(getEndPointId(), FanControl::Id, FanControl::Attributes::PercentSetting::Id, val);
+    }
+    if (attribute_id == FanControl::Attributes::PercentCurrent::Id) {
+      attribute::report(getEndPointId(), FanControl::Id, FanControl::Attributes::PercentCurrent::Id, val);
+    }
+  }
+
+  if (endpoint_id == getEndPointId() && cluster_id == FanControl::Id) {
+    if (attribute_id == FanControl::Attributes::SpeedSetting::Id) {
+      Serial.println("Reporting SpeedSetting");
+    }
+    if (attribute_id == FanControl::Attributes::SpeedCurrent::Id) {
+      Serial.println("Reporting SpeedCurrent");
+    }
+  }
+
+  if (endpoint_id == getEndPointId() && cluster_id == OnOff::Id) {
+    if (attribute_id == OnOff::Attributes::OnOff::Id) {
+      log_v("OnOff changed to %d", val->val.u8);
+      bool newState = (val->val.b == true);
+      if (_onChangeFanStateCB != nullptr) {
+        ret &= _onChangeFanStateCB(newState);
       }
       if (ret == true) {
-        currentOscillation = newState;
+        currentFanState = newState;
       }
     }
   }
@@ -57,44 +62,44 @@ bool MatterFanOscillation::attributeChangeCB(uint16_t endpoint_id, uint32_t clus
   return ret;
 }
 
-void MatterFanOscillation::onChangeOscillation(std::function<bool(bool)> cb) {
-  _onChangeOscillationCB = cb;
+void MatterFanOscillation::onChangeFanState(std::function<bool(bool)> cb) {
+  _onChangeFanStateCB = cb;
 }
 
-bool MatterFanOscillation::setOscillation(bool newState, bool performUpdate) {
+bool MatterFanOscillation::setFanState(bool newState, bool performUpdate) {
   if (!started) {
     log_w("Matter Fan device has not begun.");
     return false;
   }
   // Avoid processing if there was no change
-  if (currentOscillation == newState) {
+  if (currentFanState == newState) {
     return true;
   }
 
-  esp_matter_attr_val_t rockSettingVal = esp_matter_invalid(NULL);
-  if (!getAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockSettingVal)) {
-    log_e("Failed to get RockSetting attribute.");
+  esp_matter_attr_val_t onOffVal = esp_matter_invalid(NULL);
+  if (!getAttributeVal(OnOff::Id, OnOff::Attributes::OnOff::Id, &onOffVal)) {
+    log_e("Failed to get OnOff attribute.");
     return false;
   }
-  uint8_t newVal = newState ? 1 : 0;
-  if (rockSettingVal.val.u8 != newVal) {
-    rockSettingVal.val.u8 = newVal;
+
+  if (onOffVal.val.b != newState) {
+    onOffVal.val.b = newState;
     bool ret;
     if (performUpdate) {
-      ret = updateAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockSettingVal);
+      ret = updateAttributeVal(OnOff::Id, OnOff::Attributes::OnOff::Id, &onOffVal);
     } else {
-      ret = setAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockSettingVal);
+      ret = setAttributeVal(OnOff::Id, OnOff::Attributes::OnOff::Id, &onOffVal);
     }
     if (!ret) {
-      log_e("Failed to %s RockSetting attribute.", performUpdate ? "update" : "set");
+      log_e("Failed to %s OnOff attribute.", performUpdate ? "update" : "set");
       return false;
     }
   }
-  currentOscillation = newState;
-  log_v("Oscillation %s to %s", performUpdate ? "updated" : "set", currentOscillation ? "ON" : "OFF");
+  currentFanState = newState;
+  log_v("Fan state %s to %s", performUpdate ? "updated" : "set", currentFanState ? "ON" : "OFF");
   return true;
 }
 
-bool MatterFanOscillation::getOscillation() {
-  return currentOscillation;
+bool MatterFanOscillation::getFanState() {
+  return currentFanState;
 }
