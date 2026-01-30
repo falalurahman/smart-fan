@@ -93,12 +93,21 @@ bool MatterMultiSpeedFan::begin(uint8_t speedMax, uint8_t rockSupport) {
     return false;
   }
 
-  // Set FeatureMap to indicate MultiSpeed (0x01) and Rocking (0x04) support
-  // FeatureMap attribute (0xFFFC) - cluster revision attribute
-  esp_matter_attr_val_t feature_map_val = esp_matter_invalid(NULL);
-  feature_map_val.type = ESP_MATTER_VAL_TYPE_BITMAP32;
-  feature_map_val.val.u32 = 0x05;  // MultiSpeed (0x01) | Rocking (0x04)
-  attribute::create(cluster, FanControl::Attributes::FeatureMap::Id, ATTRIBUTE_FLAG_NONE, feature_map_val);
+  // Update FeatureMap to indicate MultiSpeed (0x01) and Rocking (0x04) support
+  // The FeatureMap attribute is already created by fan::create(), so we need to update it
+  attribute_t *feature_map_attr = attribute::get(cluster, FanControl::Attributes::FeatureMap::Id);
+  if (feature_map_attr != nullptr) {
+    esp_matter_attr_val_t feature_map_val = esp_matter_invalid(NULL);
+    feature_map_val.type = ESP_MATTER_VAL_TYPE_BITMAP32;
+    feature_map_val.val.u32 = 0x05;  // MultiSpeed (0x01) | Rocking (0x04)
+    attribute::set_val(feature_map_attr, &feature_map_val);
+    log_i("FeatureMap updated to 0x05 (MultiSpeed|Rocking)");
+  } else {
+    log_e("Failed to get FeatureMap attribute");
+  }
+
+  // Note: Global attributes (GeneratedCommandList, AcceptedCommandList, EventList,
+  // AttributeList, ClusterRevision) are auto-created by fan::create()
 
   // Add SpeedMax attribute (0x0004)
   esp_matter_attr_val_t speed_max_val = esp_matter_invalid(NULL);
@@ -130,7 +139,7 @@ bool MatterMultiSpeedFan::begin(uint8_t speedMax, uint8_t rockSupport) {
   rock_setting_val.val.u8 = 0;
   attribute::create(cluster, FanControl::Attributes::RockSetting::Id, ATTRIBUTE_FLAG_WRITABLE, rock_setting_val);
 
-  log_i("Fan initialized with FeatureMap=0x05 (MultiSpeed|Rocking), SpeedMax=%d, RockSupport=0x%02X", speedMax, rockSupport);
+  log_i("Fan initialized: SpeedMax=%d, RockSupport=0x%02X", speedMax, rockSupport);
 
   started = true;
   return true;
