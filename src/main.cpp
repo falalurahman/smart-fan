@@ -10,6 +10,11 @@ MatterMultiSpeedFan SmartFan;
 const uint8_t fanSpeedPin = 4;
 const uint8_t buttonPin = BOOT_PIN;
 
+// Input pins to monitor (only when commissioned)
+const uint8_t inputPin1 = 5;
+const uint8_t inputPin2 = 6;
+const uint8_t inputPin3 = 7;
+
 // Button control
 uint32_t button_time_stamp = 0;                // debouncing control
 bool button_state = false;                     // false = released | true = pressed
@@ -83,6 +88,11 @@ void setup() {
   pinMode(fanSpeedPin, OUTPUT);
   digitalWrite(fanSpeedPin, LOW);
 
+  // Initialize input pins for monitoring (with pull-up resistors)
+  pinMode(inputPin1, INPUT_PULLUP);
+  pinMode(inputPin2, INPUT_PULLUP);
+  pinMode(inputPin3, INPUT_PULLUP);
+
   Serial.begin(115200);
 
   // Print network interface configuration
@@ -139,12 +149,27 @@ void setup() {
     // Update accessory to sync local state with Matter
     SmartFan.updateAccessory();
 
-    // Initialize hardware to match Matter state
-    uint8_t initialSpeed = SmartFan.getSpeed();
-    lastSpeedLevel = initialSpeed;
-    if (initialSpeed > 0) {
-      pulseFanSpeed(initialSpeed);  // Pulse to reach the initial speed
+    uint8_t currentSpeed = SmartFan.getSpeed();
+    lastSpeedLevel = currentSpeed;
+
+    uint8_t newSpeedLevel = 0;
+    // Initialize input pin states
+    if (digitalRead(inputPin1) == LOW) {
+      newSpeedLevel = 1;
     }
+    if (digitalRead(inputPin2) == LOW) {
+      newSpeedLevel = 2;
+    }
+    if (digitalRead(inputPin3) == LOW) {
+      newSpeedLevel = 3;
+    }
+    if(lastSpeedLevel != newSpeedLevel) {
+      Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+      lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
+      SmartFan.setSpeed(newSpeedLevel, true); // Ensure Matter state is consistent
+    }
+
+    
   }
 }
 
@@ -171,11 +196,24 @@ void loop() {
                   SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.getRockSetting());
     SmartFan.updateAccessory();  // configure the Fan based on initial speed
 
-    // Initialize hardware to match Matter state
-    uint8_t initialSpeed = SmartFan.getSpeed();
-    lastSpeedLevel = initialSpeed;
-    if (initialSpeed > 0) {
-      pulseFanSpeed(initialSpeed);  // Pulse to reach the initial speed
+    uint8_t currentSpeed = SmartFan.getSpeed();
+    lastSpeedLevel = currentSpeed;
+
+    uint8_t newSpeedLevel = 0;
+    // Initialize input pin states
+    if (digitalRead(inputPin1) == LOW) {
+      newSpeedLevel = 1;
+    }
+    if (digitalRead(inputPin2) == LOW) {
+      newSpeedLevel = 2;
+    }
+    if (digitalRead(inputPin3) == LOW) {
+      newSpeedLevel = 3;
+    }
+    if(lastSpeedLevel != newSpeedLevel) {
+      Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+      lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
+      SmartFan.setSpeed(newSpeedLevel, true); // Ensure Matter state is consistent
     }
 
     Serial.println("Matter Node is commissioned and connected to the network. Ready for use.");
@@ -187,6 +225,22 @@ void loop() {
                   SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.isRocking(), SmartFan.getRockSetting());
   }
 
+  uint8_t newSpeedLevel = lastSpeedLevel;
+  // Monitor input pins only when commissioned
+  if (digitalRead(inputPin1) == LOW) {
+    newSpeedLevel = 1;
+  }
+  if (digitalRead(inputPin2) == LOW) {
+    newSpeedLevel = 2;
+  }
+  if (digitalRead(inputPin3) == LOW) {
+    newSpeedLevel = 3;
+  }
+  if(lastSpeedLevel != newSpeedLevel) {
+    Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+    lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
+    SmartFan.setSpeed(newSpeedLevel, true); // Ensure Matter state is consistent
+  }
 
   // A button is also used to control the fan
   // Check if the button has been pressed
