@@ -283,7 +283,40 @@ bool MatterMultiSpeedFan::setSpeed(uint8_t speed, bool performUpdate) {
   } else {
     ret = setAttributeVal(FanControl::Id, FanControl::Attributes::SpeedSetting::Id, &speedVal);
     if (ret) {
-      setAttributeVal(FanControl::Id, FanControl::Attributes::SpeedCurrent::Id, &speedVal);
+      esp_matter_attr_val_t modeVal = esp_matter_invalid(NULL);
+      modeVal.type = ESP_MATTER_VAL_TYPE_UINT8;
+      modeVal.val.u8 = (speed == 0) ? static_cast<uint8_t>(FanControl::FanModeEnum::kOff)
+                                        : static_cast<uint8_t>(FanControl::FanModeEnum::kHigh);
+
+      if (!setAttributeVal(FanControl::Id, FanControl::Attributes::FanMode::Id, &modeVal)) {
+        log_w("Failed to update FanMode attribute");
+      }
+      if (!attribute::report(endpoint_id, FanControl::Id, FanControl::Attributes::FanMode::Id, &modeVal)) {
+        log_w("Failed to report FanMode attribute");
+      }
+        
+
+      if (!updateAttributeVal(FanControl::Id, FanControl::Attributes::SpeedCurrent::Id, &speedVal)) {
+        log_w("Failed to update SpeedCurrent attribute");
+      }
+
+      esp_matter_attr_val_t percentVal = esp_matter_invalid(NULL);
+      percentVal.type = ESP_MATTER_VAL_TYPE_UINT8;
+      percentVal.val.u8 = speed == 0 ? 0 : speed  == 1 ? 33 : speed == 2 ? 66 : 100;
+
+      if (!setAttributeVal(FanControl::Id, FanControl::Attributes::PercentSetting::Id, &percentVal)) {
+        log_w("Failed to update PercentSetting attribute");
+      }
+      if (!attribute::report(endpoint_id, FanControl::Id, FanControl::Attributes::PercentSetting::Id, &percentVal)) {
+        log_w("Failed to update PercentSetting attribute");
+      }
+      if (!updateAttributeVal(FanControl::Id, FanControl::Attributes::PercentCurrent::Id, &percentVal)) {
+        log_w("Failed to update PercentCurrent attribute");
+      }
+
+      if(speed == 0 && currentRockSetting != 0) {
+        setRockSetting(0, false);
+      }
     }
   }
 
@@ -359,6 +392,7 @@ bool MatterMultiSpeedFan::setRockSetting(uint8_t rockSetting, bool performUpdate
     ret = updateAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockVal);
   } else {
     ret = setAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockVal);
+    attribute::report(endpoint_id, FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockVal);
   }
 
   if (ret) {

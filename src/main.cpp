@@ -28,6 +28,8 @@ const char *ssid = "Hyperoptic Fibre 91B3";          // Change this to your WiFi
 const char *password = "J47MkaB84J4Eju";  // Change this to your WiFi password
 #endif
 
+SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+
 // Function to pulse fanSpeedPin for speed control
 void pulseFanSpeed(int pulses) {
   for (int i = 0; i < pulses; i++) {
@@ -51,15 +53,22 @@ bool onSpeedChange(uint8_t newSpeed) {
     default:               Serial.printf("(LEVEL %d)\r\n", newSpeed); break;
   }
 
-  // Calculate pulses needed to reach new speed from last known speed
-  int pulses = (newSpeed - lastSpeedLevel + 4) % 4;
-  if (pulses > 0) {
-    Serial.printf("Pulsing fan %d times to reach speed level %d\r\n", pulses, newSpeed);
-    pulseFanSpeed(pulses);
-  }
 
-  // Update last known speed
-  lastSpeedLevel = newSpeed;
+  if (xSemaphoreTake(mutex, 5000) == pdTRUE) {
+    // Calculate pulses needed to reach new speed from last known speed
+    int pulses = (newSpeed - lastSpeedLevel + 4) % 4;
+    if (pulses > 0) {
+      Serial.printf("Pulsing fan %d times to reach speed level %d\r\n", pulses, newSpeed);
+      pulseFanSpeed(pulses);
+    }
+
+    // Update last known speed
+    lastSpeedLevel = newSpeed;
+    delay(100); // Small delay to ensure state is stable
+    Serial.printf("New speed level set to %d\r\n", lastSpeedLevel);
+
+    xSemaphoreGive(mutex);
+  }
 
   // Return true to indicate success
   return true;
@@ -149,27 +158,28 @@ void setup() {
     // Update accessory to sync local state with Matter
     SmartFan.updateAccessory();
 
-    uint8_t currentSpeed = SmartFan.getSpeed();
-    lastSpeedLevel = currentSpeed;
+    if(xSemaphoreTake(mutex, 0) == pdTRUE) {
+      uint8_t currentSpeed = SmartFan.getSpeed();
+      lastSpeedLevel = currentSpeed;
 
-    uint8_t newSpeedLevel = 0;
-    // Initialize input pin states
-    if (digitalRead(inputPin1) == LOW) {
-      newSpeedLevel = 1;
+      uint8_t newSpeedLevel = 0;
+      // Initialize input pin states
+      if (digitalRead(inputPin1) == LOW) {
+        newSpeedLevel = 1;
+      }
+      if (digitalRead(inputPin2) == LOW) {
+        newSpeedLevel = 2;
+      }
+      if (digitalRead(inputPin3) == LOW) {
+        newSpeedLevel = 3;
+      }
+      if(lastSpeedLevel != newSpeedLevel) {
+        Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+        lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
+        SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
+      }
+      xSemaphoreGive(mutex);
     }
-    if (digitalRead(inputPin2) == LOW) {
-      newSpeedLevel = 2;
-    }
-    if (digitalRead(inputPin3) == LOW) {
-      newSpeedLevel = 3;
-    }
-    if(lastSpeedLevel != newSpeedLevel) {
-      Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-      lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
-      SmartFan.setSpeed(newSpeedLevel, true); // Ensure Matter state is consistent
-    }
-
-    
   }
 }
 
@@ -199,21 +209,24 @@ void loop() {
     uint8_t currentSpeed = SmartFan.getSpeed();
     lastSpeedLevel = currentSpeed;
 
-    uint8_t newSpeedLevel = 0;
-    // Initialize input pin states
-    if (digitalRead(inputPin1) == LOW) {
-      newSpeedLevel = 1;
-    }
-    if (digitalRead(inputPin2) == LOW) {
-      newSpeedLevel = 2;
-    }
-    if (digitalRead(inputPin3) == LOW) {
-      newSpeedLevel = 3;
-    }
-    if(lastSpeedLevel != newSpeedLevel) {
-      Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-      lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
-      SmartFan.setSpeed(newSpeedLevel, true); // Ensure Matter state is consistent
+    if(xSemaphoreTake(mutex, 0) == pdTRUE) {
+      uint8_t newSpeedLevel = 0;
+      // Initialize input pin states
+      if (digitalRead(inputPin1) == LOW) {
+        newSpeedLevel = 1;
+      }
+      if (digitalRead(inputPin2) == LOW) {
+        newSpeedLevel = 2;
+      }
+      if (digitalRead(inputPin3) == LOW) {
+        newSpeedLevel = 3;
+      }
+      if(lastSpeedLevel != newSpeedLevel) {
+        Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+        lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
+        SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
+      }
+      xSemaphoreGive(mutex);
     }
 
     Serial.println("Matter Node is commissioned and connected to the network. Ready for use.");
@@ -225,21 +238,25 @@ void loop() {
                   SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.isRocking(), SmartFan.getRockSetting());
   }
 
-  uint8_t newSpeedLevel = 0;
-  // Monitor input pins only when commissioned
-  if (digitalRead(inputPin1) == LOW) {
-    newSpeedLevel = 1;
-  }
-  if (digitalRead(inputPin2) == LOW) {
-    newSpeedLevel = 2;
-  }
-  if (digitalRead(inputPin3) == LOW) {
-    newSpeedLevel = 3;
-  }
-  if(lastSpeedLevel != newSpeedLevel) {
-    Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-    lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
-    SmartFan.setSpeed(newSpeedLevel, true); // Ensure Matter state is consistent
+
+  if(xSemaphoreTake(mutex, 0) == pdTRUE) {
+    uint8_t newSpeedLevel = 0;
+    // Monitor input pins only when commissioned
+    if (digitalRead(inputPin1) == LOW) {
+      newSpeedLevel = 1;
+    }
+    if (digitalRead(inputPin2) == LOW) {
+      newSpeedLevel = 2;
+    }
+    if (digitalRead(inputPin3) == LOW) {
+      newSpeedLevel = 3;
+    }
+    if(lastSpeedLevel != newSpeedLevel) {
+      Serial.printf("Loop LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+      lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
+      SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
+    }
+    xSemaphoreGive(mutex);
   }
 
   // A button is also used to control the fan
@@ -289,7 +306,7 @@ void loop() {
     Serial.printf("Button pressed: cycling speed from %d to %d\r\n", currentSpeed, newSpeed);
 
     // Update Matter attributes - this will trigger attribute reports to controllers
-    SmartFan.setSpeed(newSpeed, true);
+    SmartFan.setSpeed(newSpeed, false);
 
     // Update last known speed
     lastSpeedLevel = newSpeed;
