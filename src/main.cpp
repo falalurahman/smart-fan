@@ -7,7 +7,7 @@
 
 MatterMultiSpeedFan SmartFan;
 
-const uint8_t fanPin = 4;
+const uint8_t fanSpeedPin = 4;
 const uint8_t buttonPin = BOOT_PIN;
 
 // Button control
@@ -23,12 +23,12 @@ const char *ssid = "Hyperoptic Fibre 91B3";          // Change this to your WiFi
 const char *password = "J47MkaB84J4Eju";  // Change this to your WiFi password
 #endif
 
-// Function to pulse fanPin for speed control
+// Function to pulse fanSpeedPin for speed control
 void pulseFan(int pulses) {
   for (int i = 0; i < pulses; i++) {
-    digitalWrite(fanPin, HIGH);
+    digitalWrite(fanSpeedPin, HIGH);
     delay(200);
-    digitalWrite(fanPin, LOW);
+    digitalWrite(fanSpeedPin, LOW);
     if (i < pulses - 1) delay(100);  // delay between pulses
   }
 }
@@ -80,8 +80,8 @@ void setup() {
   // Initialize the USER BUTTON (Boot button) GPIO that will act as a toggle switch
   pinMode(buttonPin, INPUT_PULLUP);
   // Initialize the FAN GPIO and Matter End Point
-  pinMode(fanPin, OUTPUT);
-  digitalWrite(fanPin, LOW);
+  pinMode(fanSpeedPin, OUTPUT);
+  digitalWrite(fanSpeedPin, LOW);
 
   Serial.begin(115200);
 
