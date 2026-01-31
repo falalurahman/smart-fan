@@ -24,7 +24,7 @@ const char *password = "J47MkaB84J4Eju";  // Change this to your WiFi password
 #endif
 
 // Function to pulse fanSpeedPin for speed control
-void pulseFan(int pulses) {
+void pulseFanSpeed(int pulses) {
   for (int i = 0; i < pulses; i++) {
     digitalWrite(fanSpeedPin, HIGH);
     delay(200);
@@ -50,7 +50,7 @@ bool onSpeedChange(uint8_t newSpeed) {
   int pulses = (newSpeed - lastSpeedLevel + 4) % 4;
   if (pulses > 0) {
     Serial.printf("Pulsing fan %d times to reach speed level %d\r\n", pulses, newSpeed);
-    pulseFan(pulses);
+    pulseFanSpeed(pulses);
   }
 
   // Update last known speed
@@ -143,7 +143,7 @@ void setup() {
     uint8_t initialSpeed = SmartFan.getSpeed();
     lastSpeedLevel = initialSpeed;
     if (initialSpeed > 0) {
-      pulseFan(initialSpeed);  // Pulse to reach the initial speed
+      pulseFanSpeed(initialSpeed);  // Pulse to reach the initial speed
     }
   }
 }
@@ -175,7 +175,7 @@ void loop() {
     uint8_t initialSpeed = SmartFan.getSpeed();
     lastSpeedLevel = initialSpeed;
     if (initialSpeed > 0) {
-      pulseFan(initialSpeed);  // Pulse to reach the initial speed
+      pulseFanSpeed(initialSpeed);  // Pulse to reach the initial speed
     }
 
     Serial.println("Matter Node is commissioned and connected to the network. Ready for use.");
@@ -235,14 +235,7 @@ void loop() {
     Serial.printf("Button pressed: cycling speed from %d to %d\r\n", currentSpeed, newSpeed);
 
     // Update Matter attributes - this will trigger attribute reports to controllers
-    SmartFan.setSpeed(newSpeed);
-
-    // Update physical fan
-    int pulses = (newSpeed - lastSpeedLevel + 4) % 4;
-    if (pulses > 0) {
-      Serial.printf("Pulsing fan %d times\r\n", pulses);
-      pulseFan(pulses);
-    }
+    SmartFan.setSpeed(newSpeed, true);
 
     // Update last known speed
     lastSpeedLevel = newSpeed;

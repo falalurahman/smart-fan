@@ -195,6 +195,10 @@ bool MatterMultiSpeedFan::attributeChangeCB(uint16_t endpoint_id, uint32_t clust
         if (!updateAttributeVal(FanControl::Id, FanControl::Attributes::SpeedCurrent::Id, &speedCurrentVal)) {
           log_w("Failed to update SpeedCurrent attribute");
         }
+
+        if (newSpeed == 0 && currentRockSetting != 0) {
+          setRockSetting(0, true);  // Turn off oscillation when speed is 0
+        }
       }
     }
 
@@ -227,17 +231,7 @@ bool MatterMultiSpeedFan::attributeChangeCB(uint16_t endpoint_id, uint32_t clust
       uint8_t fanMode = val->val.u8;
       log_i("FanMode changed to %d", fanMode);
 
-      // If mode is OFF, set speed to 0 (which will also turn off oscillation)
-      if (fanMode == static_cast<uint8_t>(FanControl::FanModeEnum::kOff)) {
-        if (currentSpeed != 0) {
-          setSpeed(0, true);  // This will also set RockSetting to 0
-        }
-      } else if (fanMode == static_cast<uint8_t>(FanControl::FanModeEnum::kOn)) {
-        // If mode is ON and speed is 0, set to low speed
-        if (currentSpeed == 0) {
-          setSpeed(1, true);
-        }
-      }
+      setOnOff(fanMode != static_cast<uint8_t>(FanControl::FanModeEnum::kOff), true);
     }
 
     // Handle Percent Setting changes
@@ -246,13 +240,13 @@ bool MatterMultiSpeedFan::attributeChangeCB(uint16_t endpoint_id, uint32_t clust
       log_i("PercentSetting changed to %d", percentValue);
 
       // Update PercentCurrent to match PercentSetting
-        esp_matter_attr_val_t percentCurrentVal = esp_matter_invalid(NULL);
-        percentCurrentVal.type = ESP_MATTER_VAL_TYPE_UINT8;
-        percentCurrentVal.val.u8 = percentValue;
+      esp_matter_attr_val_t percentCurrentVal = esp_matter_invalid(NULL);
+      percentCurrentVal.type = ESP_MATTER_VAL_TYPE_UINT8;
+      percentCurrentVal.val.u8 = percentValue;
 
-        if (!updateAttributeVal(FanControl::Id, FanControl::Attributes::PercentCurrent::Id, &percentCurrentVal)) {
-          log_w("Failed to update PercentCurrent attribute");
-        }
+      if (!updateAttributeVal(FanControl::Id, FanControl::Attributes::PercentCurrent::Id, &percentCurrentVal)) {
+        log_w("Failed to update PercentCurrent attribute");
+      }
     }
   }
 
@@ -296,35 +290,7 @@ bool MatterMultiSpeedFan::setSpeed(uint8_t speed, bool performUpdate) {
   if (ret) {
     currentSpeed = speed;
     log_d("Fan speed %s to %d", performUpdate ? "updated" : "set", speed);
-
-    // Update FanMode accordingly (required for HomeKit compatibility)
-    esp_matter_attr_val_t modeVal = esp_matter_invalid(NULL);
-    modeVal.type = ESP_MATTER_VAL_TYPE_UINT8;
-    modeVal.val.u8 = (speed == 0) ? static_cast<uint8_t>(FanControl::FanModeEnum::kOff)
-                                   : static_cast<uint8_t>(FanControl::FanModeEnum::kHigh);
-
-    if (performUpdate) {
-      updateAttributeVal(FanControl::Id, FanControl::Attributes::FanMode::Id, &modeVal);
-    } else {
-      setAttributeVal(FanControl::Id, FanControl::Attributes::FanMode::Id, &modeVal);
-    }
-
-    // When turning off (speed=0), also turn off oscillation
-    // This ensures HomeKit shows the fan as fully off
-    if (speed == 0 && currentRockSetting != 0) {
-      esp_matter_attr_val_t rockVal = esp_matter_invalid(NULL);
-      rockVal.type = ESP_MATTER_VAL_TYPE_BITMAP8;
-      rockVal.val.u8 = 0;
-
-      if (performUpdate) {
-        updateAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockVal);
-      } else {
-        setAttributeVal(FanControl::Id, FanControl::Attributes::RockSetting::Id, &rockVal);
-      }
-
-      currentRockSetting = 0;
-      log_d("RockSetting turned off because fan is off");
-    }
+    
   } else {
     log_e("Failed to %s speed attribute", performUpdate ? "update" : "set");
   }
