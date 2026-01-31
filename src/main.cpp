@@ -225,7 +225,7 @@ void loop() {
                   SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.isRocking(), SmartFan.getRockSetting());
   }
 
-  uint8_t newSpeedLevel = lastSpeedLevel;
+  uint8_t newSpeedLevel = 0;
   // Monitor input pins only when commissioned
   if (digitalRead(inputPin1) == LOW) {
     newSpeedLevel = 1;
