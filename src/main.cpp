@@ -34,12 +34,20 @@ enum PulseState {
 
 uint8_t expectedFanSpeed = 0;    // Target speed to reach
 uint8_t currentFanSpeed = 0;     // Current physical fan speed
-bool isPulsing = false;          // True when actively pulsing
-PulseState pulseState = PULSE_IDLE;
-unsigned long pulseStartTime = 0;
+bool isFanSpeedControlPulsing = false;          // True when actively pulsing
+PulseState fanSpeedControlPulseState = PULSE_IDLE;
+unsigned long fanSpeedControlPulseStartTime = 0;
 
 // Speed tracking and concurrency control
-SemaphoreHandle_t mutex = NULL;  // Mutex for thread safety
+SemaphoreHandle_t fanSpeedMutex = NULL;  // Mutex for thread safety
+SemaphoreHandle_t fanOscillationMutex = NULL;  // Mutex for thread safety
+
+// Oscillation control variables
+bool expectedOscillationState = false;  // Current physical oscillation state (false = OFF, true = ON)
+bool currentOscillationState = false;  // Current physical oscillation state (false = OFF, true = ON)
+bool isOscillationControlPulsing = false;   // True when pulsing oscillation pin
+unsigned long oscillationControlPulseStartTime = 0;
+const unsigned long OSCILLATION_PULSE_DURATION = 200;  // Pulse duration in ms
 
 // Matter Protocol Callback - Speed changed from controller
 bool onSpeedChange(uint8_t newSpeed) {
@@ -54,15 +62,15 @@ bool onSpeedChange(uint8_t newSpeed) {
     default:               Serial.printf("(LEVEL %d)\r\n", newSpeed); break;
   }
 
-  if (xSemaphoreTake(mutex, 5000) == pdTRUE) {
+  if (xSemaphoreTake(fanSpeedMutex, 5000) == pdTRUE) {
     // Set the expected speed - the state machine will handle pulsing
     expectedFanSpeed = newSpeed;
     Serial.printf("Expected speed set to %d\r\n", expectedFanSpeed);
-    if(isPulsing == false && expectedFanSpeed != currentFanSpeed) {
+    if(isFanSpeedControlPulsing == false && expectedFanSpeed != currentFanSpeed) {
       // Start pulsing process
-      isPulsing = true;
+      isFanSpeedControlPulsing = true;
     }
-    xSemaphoreGive(mutex);
+    xSemaphoreGive(fanSpeedMutex);
   }
 
   // Return true to indicate success
@@ -71,14 +79,26 @@ bool onSpeedChange(uint8_t newSpeed) {
 
 // Matter Protocol Callback - Rock/Oscillation changed from controller
 bool onRockChange(uint8_t rockSetting) {
-  Serial.printf("Matter Callback :: Rock Setting = 0x%02X ", rockSetting);
+  Serial.printf("Matter Callback :: Rock Setting = %d", rockSetting);
 
-  if (rockSetting & ROCK_LEFT_RIGHT) {
+  bool newOscillationState = rockSetting != 0;
+
+  if (newOscillationState) {
     Serial.println("(OSCILLATION ON)");
-    // TODO: Turn on oscillation motor/mechanism
   } else {
     Serial.println("(OSCILLATION OFF)");
-    // TODO: Turn off oscillation motor/mechanism
+  }
+
+  // Only pulse if oscillation state actually changed
+  if (xSemaphoreTake(fanOscillationMutex, 5000) == pdTRUE) {
+    expectedOscillationState = newOscillationState; // Update current oscillation state
+    Serial.printf("Pulsing oscillation control pin to toggle oscillation\r\n");
+    if (isOscillationControlPulsing == false && expectedOscillationState != currentOscillationState) {
+      isOscillationControlPulsing = true;
+      digitalWrite(FAN_OSCILLATION_CONTROL_PIN, HIGH);
+      oscillationControlPulseStartTime = millis();
+    }
+    xSemaphoreGive(fanOscillationMutex);
   }
 
   // Return true to indicate success
@@ -128,18 +148,17 @@ void handleDecommission() {
 }
 
 void syncFanSpeedBasedOnExternalInputs() {
-  if(xSemaphoreTake(mutex, 0) == pdTRUE) {
-    if(!isPulsing) {
+  if(xSemaphoreTake(fanSpeedMutex, 0) == pdTRUE) {
+    if(!isFanSpeedControlPulsing) {
       uint8_t newSpeedLevel = 0;
       // Monitor input pins only when commissioned
-      // Initialize input pin states
-        if (digitalRead(FAN_SPEED_HIGH_INPUT_PIN) == LOW) {
-          newSpeedLevel = 3;
-        } else if (digitalRead(FAN_SPEED_MEDIUM_INPUT_PIN) == LOW) {
-          newSpeedLevel = 2;
-        } else if (digitalRead(FAN_SPEED_LOW_INPUT_PIN) == LOW) {
-          newSpeedLevel = 1;
-        }
+      if (digitalRead(FAN_SPEED_HIGH_INPUT_PIN) == LOW) {
+        newSpeedLevel = 3;
+      } else if (digitalRead(FAN_SPEED_MEDIUM_INPUT_PIN) == LOW) {
+        newSpeedLevel = 2;
+      } else if (digitalRead(FAN_SPEED_LOW_INPUT_PIN) == LOW) {
+        newSpeedLevel = 1;
+      }
       if(currentFanSpeed != newSpeedLevel) {
         Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
         expectedFanSpeed = newSpeedLevel; // Update expected speed for state machine
@@ -147,7 +166,43 @@ void syncFanSpeedBasedOnExternalInputs() {
         SmartFan.setSpeed(newSpeedLevel, false); // Update Matter state without pulsing
       }
     }
-    xSemaphoreGive(mutex);
+    xSemaphoreGive(fanSpeedMutex);
+  }
+}
+
+void handleOscillationPulse() {
+  // Check if oscillation pulse is active and duration has elapsed
+  if (isOscillationControlPulsing && (millis() - oscillationControlPulseStartTime >= OSCILLATION_PULSE_DURATION)) {
+    if(xSemaphoreTake(fanOscillationMutex, 0) == pdTRUE) {
+      digitalWrite(FAN_OSCILLATION_CONTROL_PIN, LOW);
+      currentOscillationState = expectedOscillationState;
+      isOscillationControlPulsing = false;
+      Serial.printf("Oscillation pulse complete\r\n");
+      xSemaphoreGive(fanOscillationMutex);
+    }
+  }
+}
+
+void syncOscillationBasedOnExternalInput() {
+  if(xSemaphoreTake(fanOscillationMutex, 0) == pdTRUE) {
+    if (!isOscillationControlPulsing) {
+      // Read oscillation input pin (LOW = oscillation ON, HIGH = oscillation OFF due to pull-up)
+      bool physicalOscillationState = (digitalRead(FAN_OSCILLATION_INPUT_PIN) == LOW);
+
+      // Only update if state changed and we're not currently pulsing
+      if(currentOscillationState != physicalOscillationState) {
+        Serial.printf("Oscillation Input Pin: Setting oscillation to %s\r\n",
+                      physicalOscillationState ? "ON" : "OFF");
+
+        currentOscillationState = physicalOscillationState;
+        expectedOscillationState = physicalOscillationState;
+
+        // Update Matter state without pulsing (physical input means hardware already changed)
+        uint8_t newRockSetting = physicalOscillationState ? 1 : 0;
+        SmartFan.setRockSetting(newRockSetting, false);
+      }
+    }
+    xSemaphoreGive(fanOscillationMutex);
   }
 }
 
@@ -193,8 +248,8 @@ void handleCommissioning() {
                     SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.getRockSetting());
       SmartFan.updateAccessory();
 
-      if(xSemaphoreTake(mutex, 0) == pdTRUE) {
-        if(!isPulsing) {
+      if(xSemaphoreTake(fanSpeedMutex, 0) == pdTRUE) {
+        if(!isFanSpeedControlPulsing) {
           uint8_t matterSpeed = SmartFan.getSpeed();
           currentFanSpeed = matterSpeed;
 
@@ -218,7 +273,28 @@ void handleCommissioning() {
             currentFanSpeed = matterSpeed;
           }
         }
-        xSemaphoreGive(mutex);
+        xSemaphoreGive(fanSpeedMutex);
+      }
+
+      if(xSemaphoreTake(fanOscillationMutex, 0) == pdTRUE) {
+        // Initialize oscillation state
+        uint8_t matterRockSetting = SmartFan.getRockSetting();
+        bool currentOscillationState = matterRockSetting != 0;
+
+        // Check physical oscillation input pin
+        bool physicalOscillationState = (digitalRead(FAN_OSCILLATION_INPUT_PIN) == LOW);
+
+        if (currentOscillationState != physicalOscillationState) {
+          Serial.printf("Oscillation Input Pin: Setting oscillation to %s\r\n",
+                          physicalOscillationState ? "ON" : "OFF");
+          currentOscillationState = physicalOscillationState;
+          expectedOscillationState = physicalOscillationState;
+          uint8_t newRockSetting = physicalOscillationState ? ROCK_LEFT_RIGHT : 0;
+          SmartFan.setRockSetting(newRockSetting, false);
+        } else {
+          expectedOscillationState = currentOscillationState; 
+        }
+        xSemaphoreGive(fanOscillationMutex);
       }
 
       Serial.println("Matter Node is commissioned and connected to the network. Ready for use.");
@@ -237,9 +313,9 @@ void handleCommissioning() {
 }
 
 void pulseFanSpeedControl() {
-  if(isPulsing){
+  if(isFanSpeedControlPulsing){
     // Non-blocking pulse state machine
-    switch (pulseState) {
+    switch (fanSpeedControlPulseState) {
       case PULSE_IDLE:
         // Check if we need to pulse to reach expected speed
         if (expectedFanSpeed != currentFanSpeed) {
@@ -249,41 +325,41 @@ void pulseFanSpeedControl() {
             if (pulsesNeeded > 0) {
             Serial.printf("Starting pulse sequence: %d pulses to reach speed %d from %d\r\n",
                             pulsesNeeded, expectedFanSpeed, currentFanSpeed);
-            pulseState = PULSE_HIGH;
+            fanSpeedControlPulseState = PULSE_HIGH;
             digitalWrite(FAN_SPEED_CONTROL_PIN, HIGH);
-            pulseStartTime = millis();
+            fanSpeedControlPulseStartTime = millis();
           }
         }
         break;
 
       case PULSE_HIGH:
         // Keep pin HIGH for 200ms
-        if (millis() - pulseStartTime >= 200) {
+        if (millis() - fanSpeedControlPulseStartTime >= 200) {
           digitalWrite(FAN_SPEED_CONTROL_PIN, LOW);
-          pulseState = PULSE_LOW;
-          pulseStartTime = millis();
+          fanSpeedControlPulseState = PULSE_LOW;
+          fanSpeedControlPulseStartTime = millis();
         }
         break;
 
       case PULSE_LOW:
         // Keep pin LOW for 100ms between pulses
-        if (millis() - pulseStartTime >= 100) {
+        if (millis() - fanSpeedControlPulseStartTime >= 100) {
           // Pulsing complete - update current speed
-          if (xSemaphoreTake(mutex, 0) == pdTRUE) {
+          if (xSemaphoreTake(fanSpeedMutex, 0) == pdTRUE) {
             currentFanSpeed = (currentFanSpeed + 1) % 4; // Cycle through 0-3
             uint8_t pulsesNeeded = (expectedFanSpeed - currentFanSpeed + 4) % 4;
 
             if (pulsesNeeded > 0) {
               // More pulses needed - go to PULSE_HIGH
-              pulseState = PULSE_HIGH;
+              fanSpeedControlPulseState = PULSE_HIGH;
               digitalWrite(FAN_SPEED_CONTROL_PIN, HIGH);
-              pulseStartTime = millis();
+              fanSpeedControlPulseStartTime = millis();
             } else {
-              isPulsing = false;
-              pulseState = PULSE_IDLE;
+              isFanSpeedControlPulsing = false;
+              fanSpeedControlPulseState = PULSE_IDLE;
               Serial.printf("Pulse sequence complete. Current speed now: %d\r\n", currentFanSpeed);
             }
-            xSemaphoreGive(mutex);
+            xSemaphoreGive(fanSpeedMutex);
           }
         }
         break;
@@ -293,7 +369,8 @@ void pulseFanSpeedControl() {
 
 void setup() {
   // Create mutex for thread safety
-  mutex = xSemaphoreCreateMutex();
+  fanSpeedMutex = xSemaphoreCreateMutex();
+  fanOscillationMutex = xSemaphoreCreateMutex();
 
   // Initialize the USER BUTTON (Boot button) GPIO that will act as a toggle switch
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
@@ -305,6 +382,11 @@ void setup() {
   pinMode(FAN_SPEED_LOW_INPUT_PIN, INPUT_PULLUP);
   pinMode(FAN_SPEED_MEDIUM_INPUT_PIN, INPUT_PULLUP);
   pinMode(FAN_SPEED_HIGH_INPUT_PIN, INPUT_PULLUP);
+
+  // Initialize oscillation control and input pins
+  pinMode(FAN_OSCILLATION_CONTROL_PIN, OUTPUT);
+  digitalWrite(FAN_OSCILLATION_CONTROL_PIN, LOW);
+  pinMode(FAN_OSCILLATION_INPUT_PIN, INPUT_PULLUP);
 
   Serial.begin(115200);
 
@@ -375,7 +457,12 @@ void loop() {
   if (commissioningState == COMMISSIONING_DONE) {
     pulseFanSpeedControl();
     syncFanSpeedBasedOnExternalInputs();
+
+    handleOscillationPulse();
+    syncOscillationBasedOnExternalInput();
+
     handleDecommission();
+    
     printStatusPeriodically();
   }
 }
