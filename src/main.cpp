@@ -7,14 +7,6 @@
 
 MatterMultiSpeedFan SmartFan;
 
-const uint8_t fanSpeedPin = 4;
-const uint8_t buttonPin = BOOT_PIN;
-
-// Input pins to monitor (only when commissioned)
-const uint8_t inputPin1 = 5;
-const uint8_t inputPin2 = 6;
-const uint8_t inputPin3 = 7;
-
 #if CONFIG_ENABLE_MATTER_OVER_WIFI
 // WiFi is manually set and started
 const char *ssid = "Hyperoptic Fibre 91B3";          // Change this to your WiFi SSID
@@ -87,15 +79,15 @@ void setup() {
   mutex = xSemaphoreCreateMutex();
 
   // Initialize the USER BUTTON (Boot button) GPIO that will act as a toggle switch
-  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   // Initialize the FAN GPIO and Matter End Point
-  pinMode(fanSpeedPin, OUTPUT);
-  digitalWrite(fanSpeedPin, LOW);
+  pinMode(FAN_SPEED_CONTROL_PIN, OUTPUT);
+  digitalWrite(FAN_SPEED_CONTROL_PIN, LOW);
 
   // Initialize input pins for monitoring (with pull-up resistors)
-  pinMode(inputPin1, INPUT_PULLUP);
-  pinMode(inputPin2, INPUT_PULLUP);
-  pinMode(inputPin3, INPUT_PULLUP);
+  pinMode(FAN_SPEED_LOW_INPUT_PIN, INPUT_PULLUP);
+  pinMode(FAN_SPEED_MEDIUM_INPUT_PIN, INPUT_PULLUP);
+  pinMode(FAN_SPEED_HIGH_INPUT_PIN, INPUT_PULLUP);
 
   Serial.begin(115200);
 
@@ -160,14 +152,13 @@ void setup() {
 
         uint8_t newSpeedLevel = 0;
         // Initialize input pin states
-        if (digitalRead(inputPin1) == LOW) {
-          newSpeedLevel = 1;
-        }
-        if (digitalRead(inputPin2) == LOW) {
-          newSpeedLevel = 2;
-        }
-        if (digitalRead(inputPin3) == LOW) {
+        // Initialize input pin states
+        if (digitalRead(FAN_SPEED_HIGH_INPUT_PIN) == LOW) {
           newSpeedLevel = 3;
+        } else if (digitalRead(FAN_SPEED_MEDIUM_INPUT_PIN) == LOW) {
+          newSpeedLevel = 2;
+        } else if (digitalRead(FAN_SPEED_LOW_INPUT_PIN) == LOW) {
+          newSpeedLevel = 1;
         }
         if(currentFanSpeed != newSpeedLevel) {
           Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
@@ -208,7 +199,7 @@ const uint32_t decommissioningTimeout = 5000;  // keep the button pressed for 5s
 void handleDecommission() {
   // A button is also used to control the fan
   // Check if the button has been pressed
-  if (digitalRead(buttonPin) == LOW && !buttonState) {
+  if (digitalRead(BOOT_BUTTON_PIN) == LOW && !buttonState) {
     // deals with button debouncing
     buttonPressTimestamp = millis();  // record the time while the button is pressed.
     buttonState = true;           // pressed.
@@ -232,15 +223,14 @@ void syncFanSpeedBasedOnExternalInputs() {
     if(!isPulsing) {
       uint8_t newSpeedLevel = 0;
       // Monitor input pins only when commissioned
-      if (digitalRead(inputPin1) == LOW) {
-        newSpeedLevel = 1;
-      }
-      if (digitalRead(inputPin2) == LOW) {
-        newSpeedLevel = 2;
-      }
-      if (digitalRead(inputPin3) == LOW) {
-        newSpeedLevel = 3;
-      }
+      // Initialize input pin states
+        if (digitalRead(FAN_SPEED_HIGH_INPUT_PIN) == LOW) {
+          newSpeedLevel = 3;
+        } else if (digitalRead(FAN_SPEED_MEDIUM_INPUT_PIN) == LOW) {
+          newSpeedLevel = 2;
+        } else if (digitalRead(FAN_SPEED_LOW_INPUT_PIN) == LOW) {
+          newSpeedLevel = 1;
+        }
       if(currentFanSpeed != newSpeedLevel) {
         Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
         expectedFanSpeed = newSpeedLevel; // Update expected speed for state machine
@@ -266,7 +256,7 @@ void pulseFanSpeedControl() {
             Serial.printf("Starting pulse sequence: %d pulses to reach speed %d from %d\r\n",
                             pulsesNeeded, expectedFanSpeed, currentFanSpeed);
             pulseState = PULSE_HIGH;
-            digitalWrite(fanSpeedPin, HIGH);
+            digitalWrite(FAN_SPEED_CONTROL_PIN, HIGH);
             pulseStartTime = millis();
           }
         }
@@ -275,7 +265,7 @@ void pulseFanSpeedControl() {
       case PULSE_HIGH:
         // Keep pin HIGH for 200ms
         if (millis() - pulseStartTime >= 200) {
-          digitalWrite(fanSpeedPin, LOW);
+          digitalWrite(FAN_SPEED_CONTROL_PIN, LOW);
           pulseState = PULSE_LOW;
           pulseStartTime = millis();
         }
@@ -292,7 +282,7 @@ void pulseFanSpeedControl() {
             if (pulsesNeeded > 0) {
               // More pulses needed - go to PULSE_HIGH
               pulseState = PULSE_HIGH;
-              digitalWrite(fanSpeedPin, HIGH);
+              digitalWrite(FAN_SPEED_CONTROL_PIN, HIGH);
               pulseStartTime = millis();
             } else {
               isPulsing = false;
@@ -336,15 +326,13 @@ void loop() {
 
         uint8_t newSpeedLevel = 0;
         // Initialize input pin states
-        if (digitalRead(inputPin1) == LOW) {
-          newSpeedLevel = 1;
-        }
-        if (digitalRead(inputPin2) == LOW) {
-          newSpeedLevel = 2;
-        }
-        if (digitalRead(inputPin3) == LOW) {
+        if (digitalRead(FAN_SPEED_HIGH_INPUT_PIN) == LOW) {
           newSpeedLevel = 3;
-        }
+        } else if (digitalRead(FAN_SPEED_MEDIUM_INPUT_PIN) == LOW) {
+          newSpeedLevel = 2;
+        } else if (digitalRead(FAN_SPEED_LOW_INPUT_PIN) == LOW) {
+          newSpeedLevel = 1;
+        }        
         if(currentFanSpeed != newSpeedLevel) {
           Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
           expectedFanSpeed = newSpeedLevel; // Set expected speed
