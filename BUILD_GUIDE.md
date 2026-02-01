@@ -8,7 +8,7 @@ This project supports two ESP32 chip variants with different network configurati
 |---------|----------|----------|
 | **Network** | WiFi (802.11) | Thread (802.15.4) |
 | **Border Router** | Not required | **Required** (HomePod Mini, Apple TV 4K) |
-| **Environment** | `esp32-c6-devkitc-1` | `esp32h2-devkitm-1` |
+| **Environment** | `esp32-c6-devkitc-1` | `esp32-h2-devkitm-1` |
 | **Recommended For** | Most users, easy setup | Advanced users, mesh networking |
 | **Commissioning** | Via WiFi + BLE | Via Thread + BLE |
 | **Power** | ~100mA active | ~10-20mA active |
@@ -52,17 +52,17 @@ IP address: 192.168.x.x
 
 ### Build
 ```bash
-~/.platformio/penv/bin/platformio run -e esp32h2-devkitm-1
+~/.platformio/penv/bin/platformio run -e esp32-h2-devkitm-1
 ```
 
 ### Upload
 ```bash
-~/.platformio/penv/bin/platformio run -e esp32h2-devkitm-1 -t upload
+~/.platformio/penv/bin/platformio run -e esp32-h2-devkitm-1 -t upload
 ```
 
 ### Monitor
 ```bash
-~/.platformio/penv/bin/platformio device monitor -e esp32h2-devkitm-1
+~/.platformio/penv/bin/platformio device monitor -e esp32-h2-devkitm-1
 ```
 
 ### Requirements
@@ -93,17 +93,21 @@ Chip: ESP32-H2 (Thread/Zigbee only)
 
 ## GPIO Pin Configuration
 
-Both environments use the same GPIO pins:
+Each environment uses chip-specific GPIO pins:
 
-| Function | GPIO Pin | Direction |
-|----------|----------|-----------|
-| Boot Button | 9 | Input (Pull-up) |
-| Fan Speed Control | 4 | Output |
-| Speed Input - Low | 5 | Input (Pull-up) |
-| Speed Input - Medium | 6 | Input (Pull-up) |
-| Speed Input - High | 7 | Input (Pull-up) |
-| Oscillation Control | 18 | Output |
-| Oscillation Input | 19 | Input (Pull-up) |
+| Function | ESP32-C6 Pin | ESP32-H2 Pin | Direction |
+|----------|--------------|--------------|-----------|
+| Boot Button | 9 | 9 | Input (Pull-up) |
+| Fan Speed Control | 4 | 1 | Output |
+| Speed Input - Low | 5 | 2 | Input (Pull-up) |
+| Speed Input - Medium | 6 | 3 | Input (Pull-up) |
+| Speed Input - High | 7 | 4 | Input (Pull-up) |
+| Oscillation Control | 18 | 10 | Output |
+| Oscillation Input | 19 | 11 | Input (Pull-up) |
+
+**Note:** GPIO pins are different because:
+- ESP32-C6 avoids GPIO 8 (RGB LED) and uses higher-numbered safe pins (18, 19)
+- ESP32-H2 has different hardware layout and uses lower-numbered pins (1-4, 10-11)
 
 ## Switching Between Configurations
 
@@ -113,14 +117,14 @@ Both environments use the same GPIO pins:
 pio run -e esp32-c6-devkitc-1
 
 # Build for Thread (ESP32-H2)
-pio run -e esp32h2-devkitm-1
+pio run -e esp32-h2-devkitm-1
 ```
 
 ### Option 2: Set Default Environment
 Edit `platformio.ini` and add at the top:
 ```ini
 [platformio]
-default_envs = esp32-c6-devkitc-1  ; or esp32h2-devkitm-1
+default_envs = esp32-c6-devkitc-1  ; or esp32-h2-devkitm-1
 ```
 
 Then you can build without specifying `-e`:
@@ -138,8 +142,8 @@ pio run -e esp32-c6-devkitc-1 -t clean
 pio run -e esp32-c6-devkitc-1
 
 # For ESP32-H2
-pio run -e esp32h2-devkitm-1 -t clean
-pio run -e esp32h2-devkitm-1
+pio run -e esp32-h2-devkitm-1 -t clean
+pio run -e esp32-h2-devkitm-1
 ```
 
 ## Troubleshooting
@@ -219,6 +223,42 @@ Typical build sizes:
 - Flash: Similar to C6 (Thread stack vs WiFi stack are comparable)
 
 ## Configuration Files
+
+### platformio.ini Structure
+
+The project uses a common `[env]` section to reduce duplication:
+
+```ini
+[env]
+# Common settings inherited by all environments
+platform = https://github.com/pioarduino/...
+framework = arduino
+board_build.partitions = huge_app.csv
+upload_speed = 921600
+monitor_speed = 115200
+monitor_filters = default, colorize
+
+[env:esp32-c6-devkitc-1]
+# ESP32-C6 specific settings
+board = esp32-c6-devkitc-1
+build_flags =
+    -D CONFIG_ENABLE_MATTER_OVER_WIFI=1
+    # ... GPIO pins for C6
+
+[env:esp32-h2-devkitm-1]
+# ESP32-H2 specific settings
+board = esp32-h2-devkitm-1
+build_flags =
+    -D CONFIG_ENABLE_MATTER_OVER_THREAD=1
+    # ... GPIO pins for H2
+```
+
+**Benefits:**
+- Shared settings defined once in `[env]`
+- Each environment only specifies chip-specific configurations
+- Easy to maintain and update
+
+### Source Files
 
 The following files are shared between both environments:
 - `src/main.cpp` - Main application logic
