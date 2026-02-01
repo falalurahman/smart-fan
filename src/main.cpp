@@ -223,6 +223,7 @@ void handleDecommission() {
     SmartFan.setSpeed(0);  // Turn off fan
     Matter.decommission();
     buttonPressTimestamp = millis();  // avoid running decommissioning again, reboot takes a second or so
+    ESP.restart();  // restart the device after decommissioning
   }
 }
 
@@ -274,7 +275,6 @@ void pulseFanSpeedControl() {
       case PULSE_HIGH:
         // Keep pin HIGH for 200ms
         if (millis() - pulseStartTime >= 200) {
-          Serial.printf("Pulse HIGH complete. Setting pin LOW.\r\n");
           digitalWrite(fanSpeedPin, LOW);
           pulseState = PULSE_LOW;
           pulseStartTime = millis();
@@ -285,14 +285,12 @@ void pulseFanSpeedControl() {
         // Keep pin LOW for 100ms between pulses
         if (millis() - pulseStartTime >= 100) {
           // Pulsing complete - update current speed
-          Serial.printf("Pulse LOW duration complete. Updating current speed.\r\n");
-          if (xSemaphoreTake(mutex, 5000) == pdTRUE) {
+          if (xSemaphoreTake(mutex, 0) == pdTRUE) {
             currentFanSpeed = (currentFanSpeed + 1) % 4; // Cycle through 0-3
             uint8_t pulsesNeeded = (expectedFanSpeed - currentFanSpeed + 4) % 4;
 
             if (pulsesNeeded > 0) {
               // More pulses needed - go to PULSE_HIGH
-              Serial.printf("Pulse LOW complete. More pulses needed (%d). Setting pin HIGH.\r\n", pulsesNeeded);
               pulseState = PULSE_HIGH;
               digitalWrite(fanSpeedPin, HIGH);
               pulseStartTime = millis();
@@ -367,5 +365,5 @@ void loop() {
   pulseFanSpeedControl();
   syncFanSpeedBasedOnExternalInputs();
   handleDecommission();
-  // printStatusPeriodically();
+  printStatusPeriodically();
 }
