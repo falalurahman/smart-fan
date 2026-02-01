@@ -15,30 +15,28 @@ const uint8_t inputPin1 = 5;
 const uint8_t inputPin2 = 6;
 const uint8_t inputPin3 = 7;
 
-// Button control
-uint32_t button_time_stamp = 0;                // debouncing control
-bool button_state = false;                     // false = released | true = pressed
-const uint32_t debouceTime = 250;              // button debouncing time (ms)
-const uint32_t decommissioningTimeout = 5000;  // keep the button pressed for 5s, or longer, to decommission
-uint8_t lastSpeedLevel = 0;                    // Track last speed level for pulse calculation
-
 #if CONFIG_ENABLE_MATTER_OVER_WIFI
 // WiFi is manually set and started
 const char *ssid = "Hyperoptic Fibre 91B3";          // Change this to your WiFi SSID
 const char *password = "J47MkaB84J4Eju";  // Change this to your WiFi password
 #endif
 
-SemaphoreHandle_t mutex = xSemaphoreCreateMutex();
+// Non-blocking pulse state machine variables
+enum PulseState {
+  PULSE_IDLE,
+  PULSE_HIGH,      // Pin HIGH for 200ms
+  PULSE_LOW        // Pin LOW for 100ms between pulses
+};
 
-// Function to pulse fanSpeedPin for speed control
-void pulseFanSpeed(int pulses) {
-  for (int i = 0; i < pulses; i++) {
-    digitalWrite(fanSpeedPin, HIGH);
-    delay(200);
-    digitalWrite(fanSpeedPin, LOW);
-    if (i < pulses - 1) delay(100);  // delay between pulses
-  }
-}
+uint8_t expectedFanSpeed = 0;    // Target speed to reach
+uint8_t currentFanSpeed = 0;     // Current physical fan speed
+bool isPulsing = false;          // True when actively pulsing
+PulseState pulseState = PULSE_IDLE;
+unsigned long pulseStartTime = 0;
+
+// Speed tracking and concurrency control
+SemaphoreHandle_t mutex = NULL;  // Mutex for thread safety
+
 
 // Matter Protocol Callback - Speed changed from controller
 bool onSpeedChange(uint8_t newSpeed) {
@@ -53,20 +51,14 @@ bool onSpeedChange(uint8_t newSpeed) {
     default:               Serial.printf("(LEVEL %d)\r\n", newSpeed); break;
   }
 
-
   if (xSemaphoreTake(mutex, 5000) == pdTRUE) {
-    // Calculate pulses needed to reach new speed from last known speed
-    int pulses = (newSpeed - lastSpeedLevel + 4) % 4;
-    if (pulses > 0) {
-      Serial.printf("Pulsing fan %d times to reach speed level %d\r\n", pulses, newSpeed);
-      pulseFanSpeed(pulses);
+    // Set the expected speed - the state machine will handle pulsing
+    expectedFanSpeed = newSpeed;
+    Serial.printf("Expected speed set to %d\r\n", expectedFanSpeed);
+    if(isPulsing == false && expectedFanSpeed != currentFanSpeed) {
+      // Start pulsing process
+      isPulsing = true;
     }
-
-    // Update last known speed
-    lastSpeedLevel = newSpeed;
-    delay(100); // Small delay to ensure state is stable
-    Serial.printf("New speed level set to %d\r\n", lastSpeedLevel);
-
     xSemaphoreGive(mutex);
   }
 
@@ -91,6 +83,9 @@ bool onRockChange(uint8_t rockSetting) {
 }
 
 void setup() {
+  // Create mutex for thread safety
+  mutex = xSemaphoreCreateMutex();
+
   // Initialize the USER BUTTON (Boot button) GPIO that will act as a toggle switch
   pinMode(buttonPin, INPUT_PULLUP);
   // Initialize the FAN GPIO and Matter End Point
@@ -159,11 +154,83 @@ void setup() {
     SmartFan.updateAccessory();
 
     if(xSemaphoreTake(mutex, 0) == pdTRUE) {
-      uint8_t currentSpeed = SmartFan.getSpeed();
-      lastSpeedLevel = currentSpeed;
+      if(!isPulsing) {
+        uint8_t matterSpeed = SmartFan.getSpeed();
+        currentFanSpeed = matterSpeed;
 
+        uint8_t newSpeedLevel = 0;
+        // Initialize input pin states
+        if (digitalRead(inputPin1) == LOW) {
+          newSpeedLevel = 1;
+        }
+        if (digitalRead(inputPin2) == LOW) {
+          newSpeedLevel = 2;
+        }
+        if (digitalRead(inputPin3) == LOW) {
+          newSpeedLevel = 3;
+        }
+        if(currentFanSpeed != newSpeedLevel) {
+          Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+          expectedFanSpeed = newSpeedLevel; // Set expected speed
+          currentFanSpeed = newSpeedLevel; // Physical input means fan already at this speed
+          SmartFan.setSpeed(currentFanSpeed, false); // Ensure Matter state is consistent
+        } else {
+          // Initialize state machine with current speed
+          expectedFanSpeed = matterSpeed;
+          currentFanSpeed = matterSpeed;
+        }
+      }
+      xSemaphoreGive(mutex);
+    }
+  }
+}
+
+/*
+  Print Periodically the current status of the Fan Matter Accessory
+  Speed, On/Off state, Rock/Oscillation state
+*/
+unsigned long lastPrintingTime = 0;
+void printStatusPeriodically() {
+  if (millis() - lastPrintingTime >= 10000) { // Every 10 seconds
+    lastPrintingTime = millis();
+    Serial.printf("Status :: Speed = %d, OnOff = %d, Rock = %d\r\n",
+                  SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.getRockSetting());
+  }
+}
+
+/*
+  Handle Decommissioning when the button is kept pressed for a defined time
+*/
+uint32_t buttonPressTimestamp = 0;                // debouncing control
+bool buttonState = false;                     // false = released | true = pressed
+const uint32_t debouceTime = 250;              // button debouncing time (ms)
+const uint32_t decommissioningTimeout = 5000;  // keep the button pressed for 5s, or longer, to decommission
+void handleDecommission() {
+  // A button is also used to control the fan
+  // Check if the button has been pressed
+  if (digitalRead(buttonPin) == LOW && !buttonState) {
+    // deals with button debouncing
+    buttonPressTimestamp = millis();  // record the time while the button is pressed.
+    buttonState = true;           // pressed.
+  }
+
+  // Onboard User Button is used as a Fan speed cycle switch or to decommission it
+  uint32_t time_diff = millis() - buttonPressTimestamp;
+
+  // Onboard User Button is kept pressed for longer than 5 seconds in order to decommission matter node
+  if (buttonState && time_diff > decommissioningTimeout) {
+    Serial.println("Decommissioning the Fan Matter Accessory. It shall be commissioned again.");
+    SmartFan.setSpeed(0);  // Turn off fan
+    Matter.decommission();
+    buttonPressTimestamp = millis();  // avoid running decommissioning again, reboot takes a second or so
+  }
+}
+
+void syncFanSpeedBasedOnExternalInputs() {
+  if(xSemaphoreTake(mutex, 0) == pdTRUE) {
+    if(!isPulsing) {
       uint8_t newSpeedLevel = 0;
-      // Initialize input pin states
+      // Monitor input pins only when commissioned
       if (digitalRead(inputPin1) == LOW) {
         newSpeedLevel = 1;
       }
@@ -173,19 +240,77 @@ void setup() {
       if (digitalRead(inputPin3) == LOW) {
         newSpeedLevel = 3;
       }
-      if(lastSpeedLevel != newSpeedLevel) {
+      if(currentFanSpeed != newSpeedLevel) {
         Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-        lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
-        SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
+        expectedFanSpeed = newSpeedLevel; // Update expected speed for state machine
+        currentFanSpeed = newSpeedLevel; // Physical input means fan already at this speed
+        SmartFan.setSpeed(newSpeedLevel, false); // Update Matter state without pulsing
       }
-      xSemaphoreGive(mutex);
+    }
+    xSemaphoreGive(mutex);
+  }
+}
+
+void pulseFanSpeedControl() {
+  if(isPulsing){
+    // Non-blocking pulse state machine
+    switch (pulseState) {
+      case PULSE_IDLE:
+        // Check if we need to pulse to reach expected speed
+        if (expectedFanSpeed != currentFanSpeed) {
+            // Calculate pulses needed (cyclic fan: 0->1->2->3->0)
+            uint8_t pulsesNeeded = (expectedFanSpeed - currentFanSpeed + 4) % 4;
+
+            if (pulsesNeeded > 0) {
+            Serial.printf("Starting pulse sequence: %d pulses to reach speed %d from %d\r\n",
+                            pulsesNeeded, expectedFanSpeed, currentFanSpeed);
+            pulseState = PULSE_HIGH;
+            digitalWrite(fanSpeedPin, HIGH);
+            pulseStartTime = millis();
+          }
+        }
+        break;
+
+      case PULSE_HIGH:
+        // Keep pin HIGH for 200ms
+        if (millis() - pulseStartTime >= 200) {
+          Serial.printf("Pulse HIGH complete. Setting pin LOW.\r\n");
+          digitalWrite(fanSpeedPin, LOW);
+          pulseState = PULSE_LOW;
+          pulseStartTime = millis();
+        }
+        break;
+
+      case PULSE_LOW:
+        // Keep pin LOW for 100ms between pulses
+        if (millis() - pulseStartTime >= 100) {
+          // Pulsing complete - update current speed
+          Serial.printf("Pulse LOW duration complete. Updating current speed.\r\n");
+          if (xSemaphoreTake(mutex, 5000) == pdTRUE) {
+            currentFanSpeed = (currentFanSpeed + 1) % 4; // Cycle through 0-3
+            uint8_t pulsesNeeded = (expectedFanSpeed - currentFanSpeed + 4) % 4;
+
+            if (pulsesNeeded > 0) {
+              // More pulses needed - go to PULSE_HIGH
+              Serial.printf("Pulse LOW complete. More pulses needed (%d). Setting pin HIGH.\r\n", pulsesNeeded);
+              pulseState = PULSE_HIGH;
+              digitalWrite(fanSpeedPin, HIGH);
+              pulseStartTime = millis();
+            } else {
+              isPulsing = false;
+              pulseState = PULSE_IDLE;
+              Serial.printf("Pulse sequence complete. Current speed now: %d\r\n", currentFanSpeed);
+            }
+            xSemaphoreGive(mutex);
+          }
+        }
+        break;
     }
   }
 }
 
-unsigned long lastPrintingTime = 0;
-
 void loop() {
+
   // Check Matter Fan Commissioning state, which may change during execution of loop()
   if (!Matter.isDeviceCommissioned()) {
     Serial.println("");
@@ -206,25 +331,32 @@ void loop() {
                   SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.getRockSetting());
     SmartFan.updateAccessory();  // configure the Fan based on initial speed
 
-    uint8_t currentSpeed = SmartFan.getSpeed();
-    lastSpeedLevel = currentSpeed;
-
     if(xSemaphoreTake(mutex, 0) == pdTRUE) {
-      uint8_t newSpeedLevel = 0;
-      // Initialize input pin states
-      if (digitalRead(inputPin1) == LOW) {
-        newSpeedLevel = 1;
-      }
-      if (digitalRead(inputPin2) == LOW) {
-        newSpeedLevel = 2;
-      }
-      if (digitalRead(inputPin3) == LOW) {
-        newSpeedLevel = 3;
-      }
-      if(lastSpeedLevel != newSpeedLevel) {
-        Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-        lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
-        SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
+      if(!isPulsing) {
+        uint8_t matterSpeed = SmartFan.getSpeed();
+        currentFanSpeed = matterSpeed;
+
+        uint8_t newSpeedLevel = 0;
+        // Initialize input pin states
+        if (digitalRead(inputPin1) == LOW) {
+          newSpeedLevel = 1;
+        }
+        if (digitalRead(inputPin2) == LOW) {
+          newSpeedLevel = 2;
+        }
+        if (digitalRead(inputPin3) == LOW) {
+          newSpeedLevel = 3;
+        }
+        if(currentFanSpeed != newSpeedLevel) {
+          Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+          expectedFanSpeed = newSpeedLevel; // Set expected speed
+          currentFanSpeed = newSpeedLevel; // Physical input means fan already at this speed
+          SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
+        } else {
+          // Initialize state machine with current speed
+          expectedFanSpeed = matterSpeed;
+          currentFanSpeed = matterSpeed;
+        }
       }
       xSemaphoreGive(mutex);
     }
@@ -232,84 +364,8 @@ void loop() {
     Serial.println("Matter Node is commissioned and connected to the network. Ready for use.");
   }
 
-  if(millis() - lastPrintingTime >= 10000) {
-    lastPrintingTime = millis();
-    Serial.printf("Matter Fan State :: Speed = %d, OnOff = %d, Rocking = %d (0x%02X)\r\n",
-                  SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.isRocking(), SmartFan.getRockSetting());
-  }
-
-
-  if(xSemaphoreTake(mutex, 0) == pdTRUE) {
-    uint8_t newSpeedLevel = 0;
-    // Monitor input pins only when commissioned
-    if (digitalRead(inputPin1) == LOW) {
-      newSpeedLevel = 1;
-    }
-    if (digitalRead(inputPin2) == LOW) {
-      newSpeedLevel = 2;
-    }
-    if (digitalRead(inputPin3) == LOW) {
-      newSpeedLevel = 3;
-    }
-    if(lastSpeedLevel != newSpeedLevel) {
-      Serial.printf("Loop LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-      lastSpeedLevel = newSpeedLevel; // Update last speed level if it was OFF
-      SmartFan.setSpeed(newSpeedLevel, false); // Ensure Matter state is consistent
-    }
-    xSemaphoreGive(mutex);
-  }
-
-  // A button is also used to control the fan
-  // Check if the button has been pressed
-  if (digitalRead(buttonPin) == LOW && !button_state) {
-    // deals with button debouncing
-    button_time_stamp = millis();  // record the time while the button is pressed.
-    button_state = true;           // pressed.
-  }
-
-  // Onboard User Button is used as a Fan speed cycle switch or to decommission it
-  uint32_t time_diff = millis() - button_time_stamp;
-
-  // Onboard User Button is kept pressed for longer than 5 seconds in order to decommission matter node
-  if (button_state && time_diff > decommissioningTimeout) {
-    Serial.println("Decommissioning the Fan Matter Accessory. It shall be commissioned again.");
-    SmartFan.setSpeed(0);  // Turn off fan
-    SmartFan.setRockSetting(0);  // Turn off oscillation
-    Matter.decommission();
-    button_time_stamp = millis();  // avoid running decommissioning again, reboot takes a second or so
-  }
-
-  // Short button press: cycle through fan speeds (OFF -> LOW -> MEDIUM -> HIGH -> OFF)
-  if (button_state && digitalRead(buttonPin) == HIGH && time_diff > debouceTime && time_diff < decommissioningTimeout) {
-    button_state = false;  // Button released
-
-    uint8_t currentSpeed = SmartFan.getSpeed();
-    uint8_t newSpeed;
-
-    // Cycle through discrete speed levels
-    switch (currentSpeed) {
-      case FAN_SPEED_OFF:
-        newSpeed = FAN_SPEED_LOW;
-        break;
-      case FAN_SPEED_LOW:
-        newSpeed = FAN_SPEED_MEDIUM;
-        break;
-      case FAN_SPEED_MEDIUM:
-        newSpeed = FAN_SPEED_HIGH;
-        break;
-      case FAN_SPEED_HIGH:
-      default:
-        newSpeed = FAN_SPEED_OFF;
-        break;
-    }
-
-    Serial.printf("Button pressed: cycling speed from %d to %d\r\n", currentSpeed, newSpeed);
-
-    // Update Matter attributes - this will trigger attribute reports to controllers
-    SmartFan.setSpeed(newSpeed, false);
-
-    // Update last known speed
-    lastSpeedLevel = newSpeed;
-  }
-
+  pulseFanSpeedControl();
+  syncFanSpeedBasedOnExternalInputs();
+  handleDecommission();
+  // printStatusPeriodically();
 }
