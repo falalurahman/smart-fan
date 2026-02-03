@@ -143,7 +143,7 @@ void handleDecommission() {
     SmartFan.setSpeed(0);  // Turn off fan
     Matter.decommission();
     buttonPressTimestamp = millis();  // avoid running decommissioning again, reboot takes a second or so
-    ESP.restart();  // restart the device after decommissioning
+    // ESP.restart();  // restart the device after decommissioning
   }
 }
 
