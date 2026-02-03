@@ -1,9 +1,17 @@
 #include "SmartFanProviders.h"
 #include <Arduino.h>
 #include <cstring>
+#include <setup_payload/ManualSetupPayloadGenerator.h>
+#include <setup_payload/QRCodeSetupPayloadGenerator.h>
+#include <setup_payload/SetupPayload.h>
 
-// Static instance (must survive for the lifetime of the process)
+// Static instances (must survive for the lifetime of the process)
 static SmartFanDeviceInstanceInfoProvider sDeviceInstanceInfoProvider;
+static SmartFanCommissionableDataProvider sCommissionableDataProvider;
+
+// Static buffers for pairing codes
+static char sManualPairingCode[22];  // max 21 chars + null
+static char sQRCodeUrl[256];
 
 // ============================================================================
 // Helper
@@ -67,9 +75,22 @@ CHIP_ERROR SmartFanDeviceInstanceInfoProvider::GetSerialNumber(char * buf, size_
 
 CHIP_ERROR SmartFanDeviceInstanceInfoProvider::GetManufacturingDate(uint16_t & year, uint8_t & month, uint8_t & day)
 {
-    year  = SMART_FAN_MFG_YEAR;
-    month = SMART_FAN_MFG_MONTH;
-    day   = SMART_FAN_MFG_DAY;
+    // __DATE__ format: "Mmm dd yyyy" (e.g. "Feb  3 2026")
+    static const char buildDate[] = __DATE__;
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    uint8_t m = 0;
+    for (uint8_t i = 0; i < 12; i++) {
+        if (buildDate[0] == months[i * 3] &&
+            buildDate[1] == months[i * 3 + 1] &&
+            buildDate[2] == months[i * 3 + 2]) {
+            m = i + 1;
+            break;
+        }
+    }
+    day   = (uint8_t)((buildDate[4] == ' ' ? 0 : (buildDate[4] - '0') * 10) + (buildDate[5] - '0'));
+    month = m;
+    year  = (uint16_t)((buildDate[7] - '0') * 1000 + (buildDate[8] - '0') * 100 +
+                        (buildDate[9] - '0') * 10 + (buildDate[10] - '0'));
     return CHIP_NO_ERROR;
 }
 
@@ -100,6 +121,145 @@ CHIP_ERROR SmartFanDeviceInstanceInfoProvider::GetRotatingDeviceIdUniqueId(chip:
 }
 
 // ============================================================================
+// CommissionableDataProvider implementation
+// ============================================================================
+
+CHIP_ERROR SmartFanCommissionableDataProvider::Init()
+{
+    // Generate a deterministic salt from the serial number
+    memset(mSalt, 0, sizeof(mSalt));
+    const char * serial = SMART_FAN_SERIAL_NUMBER;
+    size_t serialLen = strlen(serial);
+    for (size_t i = 0; i < sizeof(mSalt); i++) {
+        mSalt[i] = (i < serialLen) ? serial[i] : (uint8_t)(i + 0x53);
+    }
+
+    // Compute SPAKE2+ verifier at runtime from passcode
+    chip::Crypto::Spake2pVerifier verifier;
+    CHIP_ERROR err = verifier.Generate(
+        SMART_FAN_SPAKE2P_ITERATION_COUNT,
+        chip::ByteSpan(mSalt, sizeof(mSalt)),
+        SMART_FAN_SETUP_PASSCODE
+    );
+    if (err != CHIP_NO_ERROR) {
+        Serial.printf("ERROR: Failed to generate SPAKE2+ verifier: %" PRIu32 "\n", err.AsInteger());
+        return err;
+    }
+
+    // Serialize the verifier for later retrieval
+    chip::MutableByteSpan verifierSpan(mSerializedVerifier);
+    err = verifier.Serialize(verifierSpan);
+    if (err != CHIP_NO_ERROR) {
+        Serial.printf("ERROR: Failed to serialize verifier: %" PRIu32 "\n", err.AsInteger());
+        return err;
+    }
+    mVerifierLen = verifierSpan.size();
+    mInitialized = true;
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::GetSetupDiscriminator(uint16_t & setupDiscriminator)
+{
+    setupDiscriminator = SMART_FAN_SETUP_DISCRIMINATOR;
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::SetSetupDiscriminator(uint16_t setupDiscriminator)
+{
+    return CHIP_ERROR_NOT_IMPLEMENTED;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::GetSpake2pIterationCount(uint32_t & iterationCount)
+{
+    iterationCount = SMART_FAN_SPAKE2P_ITERATION_COUNT;
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::GetSpake2pSalt(chip::MutableByteSpan & saltBuf)
+{
+    if (saltBuf.size() < sizeof(mSalt)) {
+        return CHIP_ERROR_BUFFER_TOO_SMALL;
+    }
+    memcpy(saltBuf.data(), mSalt, sizeof(mSalt));
+    saltBuf.reduce_size(sizeof(mSalt));
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::GetSpake2pVerifier(chip::MutableByteSpan & verifierBuf, size_t & outVerifierLen)
+{
+    if (!mInitialized) {
+        return CHIP_ERROR_INCORRECT_STATE;
+    }
+    if (verifierBuf.size() < mVerifierLen) {
+        return CHIP_ERROR_BUFFER_TOO_SMALL;
+    }
+    memcpy(verifierBuf.data(), mSerializedVerifier, mVerifierLen);
+    verifierBuf.reduce_size(mVerifierLen);
+    outVerifierLen = mVerifierLen;
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::GetSetupPasscode(uint32_t & setupPasscode)
+{
+    setupPasscode = SMART_FAN_SETUP_PASSCODE;
+    return CHIP_NO_ERROR;
+}
+
+CHIP_ERROR SmartFanCommissionableDataProvider::SetSetupPasscode(uint32_t setupPasscode)
+{
+    return CHIP_ERROR_NOT_IMPLEMENTED;
+}
+
+// ============================================================================
+// Pairing Code Helpers
+// ============================================================================
+
+static void generatePairingCodes()
+{
+    chip::PayloadContents payload;
+    payload.version = 0;
+    payload.vendorID = SMART_FAN_VENDOR_ID;
+    payload.productID = SMART_FAN_PRODUCT_ID;
+    payload.commissioningFlow = chip::CommissioningFlow::kStandard;
+    payload.rendezvousInformation.SetValue(
+        chip::RendezvousInformationFlags(chip::RendezvousInformationFlag::kBLE,
+                                         chip::RendezvousInformationFlag::kOnNetwork));
+    payload.discriminator.SetLongValue(SMART_FAN_SETUP_DISCRIMINATOR);
+    payload.setUpPINCode = SMART_FAN_SETUP_PASSCODE;
+
+    // Generate manual pairing code
+    chip::ManualSetupPayloadGenerator manualGen(payload);
+    chip::MutableCharSpan manualCodeSpan(sManualPairingCode, sizeof(sManualPairingCode));
+    CHIP_ERROR err = manualGen.payloadDecimalStringRepresentation(manualCodeSpan);
+    if (err != CHIP_NO_ERROR) {
+        strncpy(sManualPairingCode, "ERROR", sizeof(sManualPairingCode));
+    }
+
+    // Generate QR code payload
+    chip::QRCodeBasicSetupPayloadGenerator qrGen(payload);
+    char qrPayload[128];
+    chip::MutableCharSpan qrSpan(qrPayload, sizeof(qrPayload));
+    err = qrGen.payloadBase38Representation(qrSpan);
+    if (err != CHIP_NO_ERROR) {
+        strncpy(sQRCodeUrl, "ERROR", sizeof(sQRCodeUrl));
+    } else {
+        snprintf(sQRCodeUrl, sizeof(sQRCodeUrl),
+                 "https://project-chip.github.io/connectedhomeip/qrcode.html?data=%s",
+                 qrPayload);
+    }
+}
+
+const char * getSmartFanManualPairingCode()
+{
+    return sManualPairingCode;
+}
+
+const char * getSmartFanQRCodeUrl()
+{
+    return sQRCodeUrl;
+}
+
+// ============================================================================
 // Initialization
 // ============================================================================
 
@@ -108,11 +268,23 @@ void initSmartFanProviders()
     // Override the DeviceInstanceInfoProvider (vendor name, product name, serial, etc.)
     chip::DeviceLayer::SetDeviceInstanceInfoProvider(&sDeviceInstanceInfoProvider);
 
-    // Keep the ExampleDAC provider for attestation (VID 0xFFF1 works with Apple Home)
-    // Keep the default CommissionableDataProvider (passcode 20202021, discriminator 3840)
+    // Initialize and install the CommissionableDataProvider (passcode, discriminator, SPAKE2+)
+    CHIP_ERROR err = sCommissionableDataProvider.Init();
+    if (err == CHIP_NO_ERROR) {
+        chip::DeviceLayer::SetCommissionableDataProvider(&sCommissionableDataProvider);
+    } else {
+        Serial.println("WARNING: CommissionableDataProvider init failed, using defaults.");
+    }
 
-    Serial.println("Custom device info provider installed.");
+    // Keep the ExampleDAC provider for attestation (VID 0xFFF1 works with Apple Home)
+
+    // Generate pairing codes
+    generatePairingCodes();
+
+    Serial.println("Custom providers installed.");
     Serial.printf("  Vendor:  %s (0x%04X)\n", SMART_FAN_VENDOR_NAME, SMART_FAN_VENDOR_ID);
     Serial.printf("  Product: %s (0x%04X)\n", SMART_FAN_PRODUCT_NAME, SMART_FAN_PRODUCT_ID);
     Serial.printf("  Serial:  %s\n", SMART_FAN_SERIAL_NUMBER);
+    Serial.printf("  Passcode:      %lu\n", (unsigned long)SMART_FAN_SETUP_PASSCODE);
+    Serial.printf("  Discriminator: %u\n", SMART_FAN_SETUP_DISCRIMINATOR);
 }

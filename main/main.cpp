@@ -217,8 +217,8 @@ void handleCommissioning() {
         Serial.println("Matter Node is not commissioned yet.");
         Serial.println("Initiate the device discovery in your Matter environment.");
         Serial.println("Commission it to your Matter hub with the manual pairing code or QR code");
-        Serial.printf("Manual pairing code: %s\r\n", Matter.getManualPairingCode().c_str());
-        Serial.printf("QR code URL: %s\r\n", Matter.getOnboardingQRCodeUrl().c_str());
+        Serial.printf("Manual pairing code: %s\r\n", getSmartFanManualPairingCode());
+        Serial.printf("QR code URL: %s\r\n", getSmartFanQRCodeUrl());
 
         commissioningState = COMMISSIONING_WAITING;
         lastCommissioningMessageTime = millis();
@@ -235,7 +235,7 @@ void handleCommissioning() {
         if (millis() - lastCommissioningMessageTime >= 5000) {
           lastCommissioningMessageTime = millis();
           Serial.printf("Matter Node not commissioned yet. Waiting for commissioning. Commissioning code: %s\r\n",
-                        Matter.getManualPairingCode().c_str());
+                        getSmartFanManualPairingCode());
         }
       } else {
         // Commissioning just completed!
