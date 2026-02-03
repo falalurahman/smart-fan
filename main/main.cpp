@@ -1,9 +1,10 @@
 #include <Arduino.h>
 #include <Matter.h>
 #include <MatterMultiSpeedFan.h>
-#if CONFIG_ENABLE_MATTER_OVER_WIFI 
+#if CONFIG_ENABLE_MATTER_OVER_WIFI
 #include <WiFi.h>
 #endif
+#include "SmartFanProviders.h"
 
 MatterMultiSpeedFan SmartFan;
 
@@ -434,6 +435,10 @@ void setup() {
 
   // Matter beginning - Last step, after all EndPoints are initialized
   Matter.begin();
+
+  // Install custom providers AFTER Matter.begin() since esp_matter::start()
+  // sets up default providers. Our Set*Provider() calls override them.
+  initSmartFanProviders();
 
   // This may be a restart of a already commissioned Matter accessory
   if (Matter.isDeviceCommissioned()) {
