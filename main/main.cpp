@@ -20,11 +20,6 @@ CommissioningState commissioningState = COMMISSIONING_NOT_STARTED;
 unsigned long lastCommissioningMessageTime = 0;
 
 
-#if CONFIG_ENABLE_MATTER_OVER_WIFI
-// WiFi is manually set and started
-const char *ssid = "Hyperoptic Fibre 91B3";          // Change this to your WiFi SSID
-const char *password = "J47MkaB84J4Eju";  // Change this to your WiFi password
-#endif
 
 // Non-blocking pulse state machine variables
 enum PulseState {
@@ -412,21 +407,8 @@ void setup() {
     Serial.println("Matter Smart Fan - WiFi Configuration");
     Serial.println("Network: WiFi (802.11)");
     Serial.println("Chip: ESP32-C6 (Dual-band WiFi + BLE)");
+    Serial.println("WiFi credentials will be provided during Matter commissioning via BLE");
     Serial.println("===========================================");
-    // CONFIG_ENABLE_CHIPOBLE is enabled when BLE is used to commission the Matter Network
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-    // Manually connect to WiFi
-    WiFi.begin(ssid, password);
-    // Wait for connection
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println("\r\nWiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-    delay(500);
   #elif CONFIG_ENABLE_MATTER_OVER_THREAD
     Serial.println("===========================================");
     Serial.println("Matter Smart Fan - Thread Configuration");
