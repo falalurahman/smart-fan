@@ -122,29 +122,43 @@ void printStatusPeriodically() {
 /*
   Handle Decommissioning when the button is kept pressed for a defined time
 */
-uint32_t buttonPressTimestamp = 0;                // debouncing control
-bool buttonState = false;                     // false = released | true = pressed
-const uint32_t debouceTime = 250;              // button debouncing time (ms)
-const uint32_t decommissioningTimeout = 5000;  // keep the button pressed for 5s, or longer, to decommission
+uint32_t bootButtonPressTimestamp = 0;
+bool bootButtonState = false;
+uint32_t decommButtonPressTimestamp = 0;
+bool decommButtonState = false;
+const uint32_t decommissioningTimeout = 5000;  // keep either button pressed for 5s to decommission
+
+void triggerDecommission() {
+  Serial.println("Decommissioning the Fan Matter Accessory. It shall be commissioned again.");
+  SmartFan.setSpeed(0);  // Turn off fan
+  Matter.decommission();
+}
+
 void handleDecommission() {
-  // A button is also used to control the fan
-  // Check if the button has been pressed
-  if (digitalRead(BOOT_BUTTON_PIN) == LOW && !buttonState) {
-    // deals with button debouncing
-    buttonPressTimestamp = millis();  // record the time while the button is pressed.
-    buttonState = true;           // pressed.
+  // --- BOOT button (GPIO 9, active LOW) ---
+  if (digitalRead(BOOT_BUTTON_PIN) == LOW && !bootButtonState) {
+    bootButtonPressTimestamp = millis();
+    bootButtonState = true;
+  }
+  if (digitalRead(BOOT_BUTTON_PIN) == HIGH) {
+    bootButtonState = false;
+  }
+  if (bootButtonState && (millis() - bootButtonPressTimestamp > decommissioningTimeout)) {
+    triggerDecommission();
+    bootButtonPressTimestamp = millis();
   }
 
-  // Onboard User Button is used as a Fan speed cycle switch or to decommission it
-  uint32_t time_diff = millis() - buttonPressTimestamp;
-
-  // Onboard User Button is kept pressed for longer than 5 seconds in order to decommission matter node
-  if (buttonState && time_diff > decommissioningTimeout) {
-    Serial.println("Decommissioning the Fan Matter Accessory. It shall be commissioned again.");
-    SmartFan.setSpeed(0);  // Turn off fan
-    Matter.decommission();
-    buttonPressTimestamp = millis();  // avoid running decommissioning again, reboot takes a second or so
-    // ESP.restart();  // restart the device after decommissioning
+  // --- Decommission button (GPIO 5, active LOW) ---
+  if (digitalRead(DECOMMISSION_BUTTON_PIN) == LOW && !decommButtonState) {
+    decommButtonPressTimestamp = millis();
+    decommButtonState = true;
+  }
+  if (digitalRead(DECOMMISSION_BUTTON_PIN) == HIGH) {
+    decommButtonState = false;
+  }
+  if (decommButtonState && (millis() - decommButtonPressTimestamp > decommissioningTimeout)) {
+    triggerDecommission();
+    decommButtonPressTimestamp = millis();
   }
 }
 
@@ -373,8 +387,9 @@ void setup() {
   fanSpeedMutex = xSemaphoreCreateMutex();
   fanOscillationMutex = xSemaphoreCreateMutex();
 
-  // Initialize the USER BUTTON (Boot button) GPIO that will act as a toggle switch
+  // Initialize decommission buttons (both active LOW with pull-up)
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(DECOMMISSION_BUTTON_PIN, INPUT_PULLUP);
   // Initialize the FAN GPIO and Matter End Point
   pinMode(FAN_SPEED_CONTROL_PIN, OUTPUT);
   digitalWrite(FAN_SPEED_CONTROL_PIN, LOW);
