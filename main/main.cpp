@@ -4,7 +4,7 @@
 #if CONFIG_ENABLE_MATTER_OVER_WIFI
 #include <WiFi.h>
 #endif
-#include "SmartFanProviders.h"
+#include <MatterDeviceProvider.h>
 
 MatterMultiSpeedFan SmartFan;
 
@@ -217,8 +217,8 @@ void handleCommissioning() {
         Serial.println("Matter Node is not commissioned yet.");
         Serial.println("Initiate the device discovery in your Matter environment.");
         Serial.println("Commission it to your Matter hub with the manual pairing code or QR code");
-        Serial.printf("Manual pairing code: %s\r\n", getSmartFanManualPairingCode());
-        Serial.printf("QR code URL: %s\r\n", getSmartFanQRCodeUrl());
+        Serial.printf("Manual pairing code: %s\r\n", getMatterManualPairingCode());
+        Serial.printf("QR code URL: %s\r\n", getMatterQRCodeUrl());
 
         commissioningState = COMMISSIONING_WAITING;
         lastCommissioningMessageTime = millis();
@@ -235,7 +235,7 @@ void handleCommissioning() {
         if (millis() - lastCommissioningMessageTime >= 5000) {
           lastCommissioningMessageTime = millis();
           Serial.printf("Matter Node not commissioned yet. Waiting for commissioning. Commissioning code: %s\r\n",
-                        getSmartFanManualPairingCode());
+                        getMatterManualPairingCode());
         }
       } else {
         // Commissioning just completed!
@@ -438,7 +438,7 @@ void setup() {
 
   // Install custom providers AFTER Matter.begin() since esp_matter::start()
   // sets up default providers. Our Set*Provider() calls override them.
-  initSmartFanProviders();
+  initMatterDeviceProviders();
 
   // This may be a restart of a already commissioned Matter accessory
   if (Matter.isDeviceCommissioned()) {

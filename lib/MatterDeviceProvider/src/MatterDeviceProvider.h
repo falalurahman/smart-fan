@@ -7,44 +7,64 @@
 #include <lib/support/Span.h>
 
 // ============================================================================
-// Device Info Configuration - customize these values
-// All per-device values can be overridden via build flags, e.g.:
-//   -D SMART_FAN_SERIAL_NUMBER=\"SF-2026-003\"
+// Device Info Configuration
+// All values can be overridden via build flags, e.g.:
+//   -D MATTER_DEVICE_SERIAL_NUMBER=\"SF-2026-003\"
 // ============================================================================
-#define SMART_FAN_VENDOR_NAME       "Falalu's DIY"
-#define SMART_FAN_VENDOR_ID         0xFFF1          // Test VID (matches ExampleDAC)
-#define SMART_FAN_PRODUCT_NAME      "Matter Smart Fan"
-#define SMART_FAN_PRODUCT_ID        0x8000          // Matches pre-compiled sdkconfig
-#ifndef SMART_FAN_SERIAL_NUMBER
-#define SMART_FAN_SERIAL_NUMBER     "SF-2625-001"
+#ifndef MATTER_DEVICE_VENDOR_NAME
+#define MATTER_DEVICE_VENDOR_NAME       "Falalu's DIY"
 #endif
-#define SMART_FAN_HW_VERSION        1
-#define SMART_FAN_HW_VERSION_STRING "v1.0"
-#define SMART_FAN_PRODUCT_URL       ""
-#define SMART_FAN_PRODUCT_LABEL     "Smart Fan"
-#define SMART_FAN_PART_NUMBER       ""
+#ifndef MATTER_DEVICE_VENDOR_ID
+#define MATTER_DEVICE_VENDOR_ID         0xFFF1          // Test VID (matches ExampleDAC)
+#endif
+#ifndef MATTER_DEVICE_PRODUCT_NAME
+#define MATTER_DEVICE_PRODUCT_NAME      "Matter Device"
+#endif
+#ifndef MATTER_DEVICE_PRODUCT_ID
+#define MATTER_DEVICE_PRODUCT_ID        0x8000
+#endif
+#ifndef MATTER_DEVICE_SERIAL_NUMBER
+#define MATTER_DEVICE_SERIAL_NUMBER     "MD-0000-001"
+#endif
+#ifndef MATTER_DEVICE_HW_VERSION
+#define MATTER_DEVICE_HW_VERSION        1
+#endif
+#ifndef MATTER_DEVICE_HW_VERSION_STRING
+#define MATTER_DEVICE_HW_VERSION_STRING "v1.0"
+#endif
+#ifndef MATTER_DEVICE_PRODUCT_URL
+#define MATTER_DEVICE_PRODUCT_URL       ""
+#endif
+#ifndef MATTER_DEVICE_PRODUCT_LABEL
+#define MATTER_DEVICE_PRODUCT_LABEL     "Matter Device"
+#endif
+#ifndef MATTER_DEVICE_PART_NUMBER
+#define MATTER_DEVICE_PART_NUMBER       ""
+#endif
 
 // ============================================================================
-// Commissioning Configuration - customize these values
+// Commissioning Configuration
 // Per-device values can be overridden via build flags, e.g.:
-//   -D SMART_FAN_SETUP_PASSCODE=12345678
-//   -D SMART_FAN_SETUP_DISCRIMINATOR=1234
+//   -D MATTER_DEVICE_SETUP_PASSCODE=12345678
+//   -D MATTER_DEVICE_SETUP_DISCRIMINATOR=1234
 // ============================================================================
 // Passcode: 1 to 99999998 (exclude 11111111, 22222222, ..., 12345678, 87654321)
-#ifndef SMART_FAN_SETUP_PASSCODE
-#define SMART_FAN_SETUP_PASSCODE      26250001
+#ifndef MATTER_DEVICE_SETUP_PASSCODE
+#define MATTER_DEVICE_SETUP_PASSCODE      20202021
 #endif
 // Discriminator: 0 to 4095 (12-bit)
-#ifndef SMART_FAN_SETUP_DISCRIMINATOR
-#define SMART_FAN_SETUP_DISCRIMINATOR 2026
+#ifndef MATTER_DEVICE_SETUP_DISCRIMINATOR
+#define MATTER_DEVICE_SETUP_DISCRIMINATOR 3840
 #endif
 // SPAKE2+ PBKDF2 iteration count (1000 - 100000)
-#define SMART_FAN_SPAKE2P_ITERATION_COUNT 1000
+#ifndef MATTER_DEVICE_SPAKE2P_ITERATION_COUNT
+#define MATTER_DEVICE_SPAKE2P_ITERATION_COUNT 1000
+#endif
 
 // ============================================================================
 // Custom Device Instance Info Provider
 // ============================================================================
-class SmartFanDeviceInstanceInfoProvider : public chip::DeviceLayer::DeviceInstanceInfoProvider
+class MatterDeviceInstanceInfoProvider : public chip::DeviceLayer::DeviceInstanceInfoProvider
 {
 public:
     CHIP_ERROR GetVendorName(char * buf, size_t bufSize) override;
@@ -64,7 +84,7 @@ public:
 // ============================================================================
 // Custom Commissionable Data Provider
 // ============================================================================
-class SmartFanCommissionableDataProvider : public chip::DeviceLayer::CommissionableDataProvider
+class MatterCommissionableDataProvider : public chip::DeviceLayer::CommissionableDataProvider
 {
 public:
     // Call once at startup to compute SPAKE2+ verifier from passcode
@@ -88,10 +108,10 @@ private:
 // ============================================================================
 // Pairing Code Helpers
 // ============================================================================
-const char * getSmartFanManualPairingCode();
-const char * getSmartFanQRCodeUrl();
+const char * getMatterManualPairingCode();
+const char * getMatterQRCodeUrl();
 
 // ============================================================================
 // Initialization - call AFTER Matter.begin()
 // ============================================================================
-void initSmartFanProviders();
+void initMatterDeviceProviders();
