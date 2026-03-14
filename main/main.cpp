@@ -3,6 +3,8 @@
 #include <MatterMultiSpeedFan.h>
 #if CONFIG_ENABLE_MATTER_OVER_WIFI
 #include <WiFi.h>
+#elif CONFIG_ENABLE_MATTER_OVER_THREAD
+#include <platform/ThreadStackManager.h>
 #endif
 #include <MatterDeviceProvider.h>
 
@@ -12,6 +14,7 @@ MatterMultiSpeedFan SmartFan;
 enum CommissioningState {
   COMMISSIONING_NOT_STARTED,
   COMMISSIONING_WAITING,
+  COMMISSIONING_RECONNECTING,    // Commissioned on reboot, waiting for network
   COMMISSIONING_JUST_COMPLETED,
   COMMISSIONING_DONE
 };
@@ -254,6 +257,33 @@ void handleCommissioning() {
       }
       break;
 
+    case COMMISSIONING_RECONNECTING:
+      // Device is commissioned but rebooted — wait for network before initializing
+      #if CONFIG_ENABLE_MATTER_OVER_WIFI
+      if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("WiFi connected. IP: %s\r\n", WiFi.localIP().toString().c_str());
+        commissioningState = COMMISSIONING_JUST_COMPLETED;
+      } else {
+        if (millis() - lastCommissioningMessageTime >= 3000) {
+          lastCommissioningMessageTime = millis();
+          Serial.printf("Waiting for WiFi reconnection... (status=%d)\r\n", WiFi.status());
+        }
+      }
+      #elif CONFIG_ENABLE_MATTER_OVER_THREAD
+      if (chip::DeviceLayer::ThreadStackMgr().IsThreadAttached()) {
+        Serial.println("Thread network attached. Proceeding with initialization.");
+        commissioningState = COMMISSIONING_JUST_COMPLETED;
+      } else {
+        if (millis() - lastCommissioningMessageTime >= 3000) {
+          lastCommissioningMessageTime = millis();
+          Serial.println("Waiting for Thread network attachment...");
+        }
+      }
+      #else
+      commissioningState = COMMISSIONING_JUST_COMPLETED;
+      #endif
+      break;
+
     case COMMISSIONING_JUST_COMPLETED:
       // Initialize state once after commissioning completes
       Serial.printf("Initial State :: Speed = %d, OnOff = %d, Rock = 0x%02X\r\n",
@@ -439,17 +469,12 @@ void setup() {
   // sets up default providers. Our Set*Provider() calls override them.
   initMatterDeviceProviders();
 
-  // This may be a restart of a already commissioned Matter accessory
+  // This may be a restart of an already commissioned Matter accessory.
+  // Enter RECONNECTING state so the state machine waits for network before
+  // syncing state with Matter (updateAccessory must run after WiFi is up).
   if (Matter.isDeviceCommissioned()) {
-    Serial.println("Matter Node is commissioned and connected to the network. Ready for use.");
-    Serial.printf("Initial State :: Speed = %d, OnOff = %d, Rock = 0x%02X\r\n",
-                  SmartFan.getSpeed(), SmartFan.getOnOff(), SmartFan.getRockSetting());
-
-    // Update accessory to sync local state with Matter
-    SmartFan.updateAccessory();
-
-    // Set commissioning state to DONE since already commissioned
-    commissioningState = COMMISSIONING_JUST_COMPLETED;
+    Serial.println("Matter Node is commissioned. Waiting for network connection...");
+    commissioningState = COMMISSIONING_RECONNECTING;
   }
 }
 
