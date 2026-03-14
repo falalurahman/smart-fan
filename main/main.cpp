@@ -169,11 +169,13 @@ void syncFanSpeedBasedOnExternalInputs() {
       } else if (digitalRead(FAN_SPEED_LOW_INPUT_PIN) == LOW) {
         newSpeedLevel = 1;
       }
-      if(currentFanSpeed != newSpeedLevel) {
-        Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
-        expectedFanSpeed = newSpeedLevel; // Update expected speed for state machine
-        currentFanSpeed = newSpeedLevel; // Physical input means fan already at this speed
-        SmartFan.setSpeed(newSpeedLevel, false); // Update Matter state without pulsing
+      if(newSpeedLevel == 0) {
+        if(currentFanSpeed != newSpeedLevel) {
+          Serial.printf("LED Input Pin: Setting speed level to %d\r\n", newSpeedLevel);
+          expectedFanSpeed = newSpeedLevel; // Update expected speed for state machine
+          currentFanSpeed = newSpeedLevel; // Physical input means fan already at this speed
+          SmartFan.setSpeed(newSpeedLevel, false); // Update Matter state without pulsing
+        }
       }
     }
     xSemaphoreGive(fanSpeedMutex);
@@ -344,7 +346,7 @@ void pulseFanSpeedControl() {
 
       case PULSE_HIGH:
         // Keep pin HIGH for 200ms
-        if (millis() - fanSpeedControlPulseStartTime >= 200) {
+        if (millis() - fanSpeedControlPulseStartTime >= 400) {
           digitalWrite(FAN_SPEED_CONTROL_PIN, LOW);
           fanSpeedControlPulseState = PULSE_LOW;
           fanSpeedControlPulseStartTime = millis();
@@ -353,7 +355,7 @@ void pulseFanSpeedControl() {
 
       case PULSE_LOW:
         // Keep pin LOW for 100ms between pulses
-        if (millis() - fanSpeedControlPulseStartTime >= 100) {
+        if (millis() - fanSpeedControlPulseStartTime >= 200) {
           // Pulsing complete - update current speed
           if (xSemaphoreTake(fanSpeedMutex, 0) == pdTRUE) {
             currentFanSpeed = (currentFanSpeed + 1) % 4; // Cycle through 0-3
